@@ -1,0 +1,10 @@
+system_resource_graph:
+  type: task
+  job:
+    timing: 30s
+    language: bash
+    logic_digest_id: [YOUR DIGEST ID FOR LINUX_AGENT.BASH]
+    done_tags: systemgraph,sysok
+    fail_tags: systemgraphfail
+    threads: 1
+    timeout: 60

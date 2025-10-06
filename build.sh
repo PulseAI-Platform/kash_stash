@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed kash_stash.py
