@@ -70,6 +70,7 @@ Use this setup if you want your agents to **pull scripts and push monitoring dat
 
 For reference, the config for a medium-level use case should look like this:
 
+```yaml
 system_resource_graph:
   type: task
   job:
@@ -80,6 +81,7 @@ system_resource_graph:
     fail_tags: systemgraphfail
     threads: 1
     timeout: 60
+```
 
 You should now start seeing monitoring data flow in.
 Iterate and expand freely — Pulse is built to observe and evolve.
@@ -91,7 +93,7 @@ The end result should resemble the included example screenshot in the repo.
 ## 🧠 Business Logic Use Case (Very Experimental)
 
 If you want to run Pulse for **automation or distributed business logic**, you’ll likely need to advertise a tag for incoming work, locks, and completions to the pod as well, ex:
-
+```yaml
 queuetest:
   type: queue
   job:
@@ -106,6 +108,7 @@ queuetest:
       retry_failed: y
     threads: 2
     timeout: 300
+```
 
 > ⚠️ **Security Notice:**
 > Do *not* run sensitive business logic on the same agent used for monitoring or assistance, especially on end-user machines.
