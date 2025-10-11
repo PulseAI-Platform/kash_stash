@@ -65,6 +65,21 @@ Use this setup if you want your agents to **pull scripts and push monitoring dat
 4. In your template, reference the ID of this second digest as the *logic digest ID*.
 5. Restart the agent if it was already running.
 
+For reference, the config for a medium-level use case should look like this:
+
+```yaml
+system_resource_graph:
+  type: task
+  job:
+    timing: 10m
+    language: bash
+    logic_digest_id: 10641
+    done_tags: systemgraph,sysok
+    fail_tags: systemgraphfail
+    threads: 1
+    timeout: 60
+```
+
 You should now start seeing monitoring data flow in.
 Iterate and expand freely — Pulse is built to observe and evolve.
 
@@ -74,10 +89,23 @@ The end result should resemble the included example screenshot in the repo.
 
 ## 🧠 Business Logic Use Case (Very Experimental)
 
-If you want to run Pulse for **automation or distributed business logic**, you’ll need:
-
-* A **`get_digest`** key (required)
-* A **`list_digests`** key (for distributed queue logic)
+If you want to run Pulse for **automation or distributed business logic**, you’ll likely need to advertise a tag for incoming work, locks, and completions to the pod as well, ex:
+```yaml
+queuetest:
+  type: queue
+  job:
+    language: bash
+    logic_digest_id: 12142
+    queue_tag:
+      queue_tag: automationtest-work
+      lookback: 5m
+      lock_tag: automationtest-lock
+      done_tags: automationtest-done
+      fail_tags: automationtest-fail
+      retry_failed: y
+    threads: 2
+    timeout: 300
+```
 
 > ⚠️ **Security Notice:**
 > Do *not* run sensitive business logic on the same agent used for monitoring or assistance, especially on end-user machines.
