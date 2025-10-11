@@ -1,10 +1,25 @@
 system_resource_graph:
   type: task
   job:
-    timing: 30s
+    timing: 10m
     language: bash
-    logic_digest_id: [YOUR DIGEST ID FOR LINUX_AGENT.BASH]
+    logic_digest_id: 10641
     done_tags: systemgraph,sysok
     fail_tags: systemgraphfail
     threads: 1
     timeout: 60
+
+queuetest:
+  type: queue
+  job:
+    language: bash
+    logic_digest_id: 12142
+    queue_tag:
+      queue_tag: automationtest-work
+      lookback: 5m
+      lock_tag: automationtest-lock
+      done_tags: automationtest-done
+      fail_tags: automationtest-fail
+      retry_failed: y
+    threads: 2
+    timeout: 300

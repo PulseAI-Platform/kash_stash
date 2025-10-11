@@ -18,8 +18,6 @@ import threading
 CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
 
 DEFAULT_PROBE_ID = "29"
-DEFAULT_DIGEST_PROBE_ID = "7"
-DEFAULT_LISTDIGESTS_PROBE_ID = "6"
 
 class KashStash:
     def __init__(self):
@@ -41,69 +39,103 @@ class KashStash:
         root = tk.Tk()
         root.withdraw()
         messagebox.showinfo(
-            "Kash Stash", "First run! Let's set up your first endpoint.\n"
-                          "You'll set a primary \"ingest\" probe. The digest-fetch endpoints are optional and can be left blank."
+            "Kash Stash", 
+            "First run! Let's set up your first endpoint.\n"
+            "You'll configure:\n"
+            "1. POST probe for uploading files\n"
+            "2. Pod API for fetching digests"
         )
         
+        # Basic endpoint info
         name = simpledialog.askstring("Setup", "Endpoint name:") or "Default"
+        device = simpledialog.askstring("Setup", "Device name:") or ""
+        
+        # POST probe configuration (for uploads)
+        messagebox.showinfo("Setup", "First, configure the POST probe for uploading files.")
         key = simpledialog.askstring("Setup", "PROBE_KEY for POST ingest:") or ""
         node = simpledialog.askstring("Setup", "NODE_NAME for POST ingest:") or ""
         probe_id = simpledialog.askstring("Setup", f"PROBE_ID for POST ingest:", initialvalue=DEFAULT_PROBE_ID) or DEFAULT_PROBE_ID
-        device = simpledialog.askstring("Setup", "Device name:") or ""
         
+        # Screenshot settings
         save_screenshots = messagebox.askyesno("Setup", "Save screenshots locally?")
         folder = ""
         if save_screenshots:
             folder = filedialog.askdirectory(title="Screenshot folder") or ""
         
-        # Config template digest (used by agent)
+        # Pod configuration (for fetching digests)
+        messagebox.showinfo("Setup", "Now configure the Pod API for fetching digests.")
+        pod_url = simpledialog.askstring(
+            "Pod Setup", 
+            "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):"
+        ) or ""
+        pod_key = simpledialog.askstring("Pod Setup", "Pod API Key (X-POD-KEY):") or ""
+        
+        # Config digest settings
         config_digest_id = simpledialog.askstring(
-            "Config Digest",
-            "Config digest id (the digest id from your node where the config template is stored):"
+            "Config", 
+            "Agent config digest ID (the digest containing your YAML config):"
         ) or ""
-        config_digest_node_name = simpledialog.askstring(
-            "Config Digest",
-            f"NODE_NAME for config digest (leave blank to use POST ingest node '{node}'):"
-        ) or "" or node
-
-        # Optional: single-digest GET probe
-        digest_probe_id = simpledialog.askstring(
-            "OPTIONAL", "PROBE_ID for GET single digest (blank=skip):", initialvalue=DEFAULT_DIGEST_PROBE_ID
-        ) or ""
-        digest_probe_key = simpledialog.askstring("OPTIONAL", "PROBE_KEY for GET single digest (blank=skip):") or ""
-        digest_node_name = simpledialog.askstring(
-            "OPTIONAL", f"NODE_NAME for GET single digest (blank=use ingest node '{node}'):"
-        ) or "" or node
-
-        # Optional: list-digests GET probe
-        listdigests_probe_id = simpledialog.askstring(
-            "OPTIONAL", "PROBE_ID for LIST digests (blank=skip):", initialvalue=DEFAULT_LISTDIGESTS_PROBE_ID
-        ) or ""
-        listdigests_probe_key = simpledialog.askstring("OPTIONAL", "PROBE_KEY for LIST digests (blank=skip):") or ""
-        listdigests_node_name = simpledialog.askstring(
-            "OPTIONAL", f"NODE_NAME for LIST digests (blank=use ingest node '{node}'):"
-        ) or "" or node
-
+        config_tags = simpledialog.askstring(
+            "Config",
+            "Tags to search for config digest (comma-separated):",
+            initialvalue="agent-config"
+        ) or "agent-config"
+        cache_minutes = simpledialog.askstring(
+            "Config",
+            "Config cache minutes (0=always refresh, -1=cache forever, 5=refresh every 5 min):",
+            initialvalue="5"
+        ) or "5"
+        
+        # Queue processing tags
+        messagebox.showinfo("Setup", "Finally, specify which tags the pod should pull for queue processing.")
+        queue_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Queue tags to pull (comma-separated):",
+            initialvalue="queue"
+        ) or "queue"
+        lock_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Lock tags to pull (comma-separated):",
+            initialvalue="lock"
+        ) or "lock"
+        done_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Done tags to pull (comma-separated):",
+            initialvalue="done"
+        ) or "done"
+        logic_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Logic/script tags to pull (comma-separated):",
+            initialvalue="logic,script,agent-config"
+        ) or "logic,script,agent-config"
+        
         endpoint = {
             "name": name,
+            "DEVICE": device,
+            
+            # POST probe config (for uploads)
             "PROBE_KEY": key,
             "NODE_NAME": node,
             "PROBE_ID": probe_id,
-            "DEVICE": device,
+            
+            # Pod config (for fetching)
+            "POD_URL": pod_url,
+            "POD_KEY": pod_key,
+            
+            # Config settings
+            "CONFIG_DIGEST_ID": config_digest_id,
+            "CONFIG_DIGEST_TAGS": config_tags,
+            "CONFIG_CACHE_MINUTES": int(cache_minutes),
+            
+            # Queue tags
+            "QUEUE_TAGS": queue_tags,
+            "LOCK_TAGS": lock_tags,
+            "DONE_TAGS": done_tags,
+            "LOGIC_TAGS": logic_tags,
+            
+            # Screenshot settings
             "KEEP_SCREENSHOTS": save_screenshots,
             "SCREENSHOT_FOLDER": folder,
-
-            # NEW:
-            "CONFIG_DIGEST_ID": config_digest_id,
-            "CONFIG_DIGEST_NODE_NAME": config_digest_node_name or node,
-
-            "DIGEST_PROBE_ID": digest_probe_id,
-            "DIGEST_PROBE_KEY": digest_probe_key,
-            "DIGEST_NODE_NAME": digest_node_name or node,
-
-            "LISTDIGESTS_PROBE_ID": listdigests_probe_id,
-            "LISTDIGESTS_PROBE_KEY": listdigests_probe_key,
-            "LISTDIGESTS_NODE_NAME": listdigests_node_name or node,
         }
         
         self.cfg["endpoints"] = [endpoint]
@@ -145,70 +177,109 @@ class KashStash:
         root = tk.Tk()
         root.withdraw()
         
+        # Basic info
         name = simpledialog.askstring("Add Endpoint", "Endpoint name:", parent=root)
         if not name:
             root.destroy()
             return
-            
+        
+        device = simpledialog.askstring("Add Endpoint", "Device name:", parent=root) or ""
+        
+        # POST probe config
+        messagebox.showinfo("Add Endpoint", "Configure the POST probe for uploading.", parent=root)
         key = simpledialog.askstring("Add Endpoint", "PROBE_KEY for POST ingest:", parent=root) or ""
         node = simpledialog.askstring("Add Endpoint", "NODE_NAME for POST ingest:", parent=root) or ""
         probe_id = simpledialog.askstring(
             "Add Endpoint", "PROBE_ID for POST ingest:", initialvalue=DEFAULT_PROBE_ID, parent=root
         ) or DEFAULT_PROBE_ID
-        device = simpledialog.askstring("Add Endpoint", "Device name:", parent=root) or ""
 
+        # Screenshot settings
         save_screenshots = messagebox.askyesno("Add Endpoint", "Save screenshots locally?", parent=root)
         folder = ""
         if save_screenshots:
             folder = filedialog.askdirectory(title="Screenshot folder", parent=root) or ""
 
-        # Config template digest (used by agent)
-        config_digest_id = simpledialog.askstring(
-            "Config Digest",
-            "Config digest id (the digest id from your node where the config template is stored):",
+        # Pod configuration
+        messagebox.showinfo("Add Endpoint", "Configure the Pod API for fetching.", parent=root)
+        pod_url = simpledialog.askstring(
+            "Pod Setup", 
+            "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):",
             parent=root
         ) or ""
-        config_digest_node_name = simpledialog.askstring(
-            "Config Digest",
-            f"NODE_NAME for config digest (leave blank to use POST ingest node '{node}'):",
-            parent=root
-        ) or "" or node
-
-        digest_probe_id = simpledialog.askstring(
-            "OPTIONAL", "PROBE_ID for GET single digest (blank=skip):", initialvalue=DEFAULT_DIGEST_PROBE_ID, parent=root
-        ) or ""
-        digest_probe_key = simpledialog.askstring("OPTIONAL", "PROBE_KEY for GET single digest (blank=skip):", parent=root) or ""
-        digest_node_name = simpledialog.askstring(
-            "OPTIONAL", f"NODE_NAME for GET single digest (blank=use ingest node '{node}'):", parent=root
-        ) or "" or node
+        pod_key = simpledialog.askstring("Pod Setup", "Pod API Key (X-POD-KEY):", parent=root) or ""
         
-        listdigests_probe_id = simpledialog.askstring(
-            "OPTIONAL", "PROBE_ID for LIST digests (blank=skip):", initialvalue=DEFAULT_LISTDIGESTS_PROBE_ID, parent=root
+        # Config digest
+        config_digest_id = simpledialog.askstring(
+            "Config",
+            "Agent config digest ID:",
+            parent=root
         ) or ""
-        listdigests_probe_key = simpledialog.askstring("OPTIONAL", "PROBE_KEY for LIST digests (blank=skip):", parent=root) or ""
-        listdigests_node_name = simpledialog.askstring(
-            "OPTIONAL", f"NODE_NAME for LIST digests (blank=use ingest node '{node}'):", parent=root
-        ) or "" or node
+        config_tags = simpledialog.askstring(
+            "Config",
+            "Tags to search for config (comma-separated):",
+            initialvalue="agent-config",
+            parent=root
+        ) or "agent-config"
+        cache_minutes = simpledialog.askstring(
+            "Config",
+            "Config cache minutes (0=always refresh, -1=cache forever):",
+            initialvalue="5",
+            parent=root
+        ) or "5"
+        
+        # Queue tags
+        queue_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Queue tags to pull (comma-separated):",
+            initialvalue="queue",
+            parent=root
+        ) or "queue"
+        lock_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Lock tags to pull (comma-separated):",
+            initialvalue="lock",
+            parent=root
+        ) or "lock"
+        done_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Done tags to pull (comma-separated):",
+            initialvalue="done",
+            parent=root
+        ) or "done"
+        logic_tags = simpledialog.askstring(
+            "Queue Tags",
+            "Logic/script tags to pull (comma-separated):",
+            initialvalue="logic,script,agent-config",
+            parent=root
+        ) or "logic,script,agent-config"
 
         endpoint = {
             "name": name,
+            "DEVICE": device,
+            
+            # POST probe config
             "PROBE_KEY": key,
             "NODE_NAME": node,
             "PROBE_ID": probe_id,
-            "DEVICE": device,
+            
+            # Pod config
+            "POD_URL": pod_url,
+            "POD_KEY": pod_key,
+            
+            # Config settings
+            "CONFIG_DIGEST_ID": config_digest_id,
+            "CONFIG_DIGEST_TAGS": config_tags,
+            "CONFIG_CACHE_MINUTES": int(cache_minutes),
+            
+            # Queue tags
+            "QUEUE_TAGS": queue_tags,
+            "LOCK_TAGS": lock_tags,
+            "DONE_TAGS": done_tags,
+            "LOGIC_TAGS": logic_tags,
+            
+            # Screenshot settings
             "KEEP_SCREENSHOTS": save_screenshots,
             "SCREENSHOT_FOLDER": folder,
-
-            "CONFIG_DIGEST_ID": config_digest_id,
-            "CONFIG_DIGEST_NODE_NAME": config_digest_node_name or node,
-
-            "DIGEST_PROBE_ID": digest_probe_id,
-            "DIGEST_PROBE_KEY": digest_probe_key,
-            "DIGEST_NODE_NAME": digest_node_name or node,
-
-            "LISTDIGESTS_PROBE_ID": listdigests_probe_id,
-            "LISTDIGESTS_PROBE_KEY": listdigests_probe_key,
-            "LISTDIGESTS_NODE_NAME": listdigests_node_name or node,
         }
         
         self.cfg["endpoints"].append(endpoint)
@@ -235,9 +306,16 @@ class KashStash:
             idx = int(idx_str) - 1
             if 0 <= idx < len(endpoints):
                 ep = endpoints[idx]
+                
+                # Basic info
                 new_name = simpledialog.askstring("Edit", "Name:", initialvalue=ep.get("name", ""), parent=root)
                 if new_name is not None:
                     ep["name"] = new_name
+                new_device = simpledialog.askstring("Edit", "Device name:", initialvalue=ep.get("DEVICE", ""), parent=root)
+                if new_device is not None:
+                    ep["DEVICE"] = new_device
+                
+                # POST probe
                 new_key = simpledialog.askstring("Edit", "PROBE_KEY for POST ingest:", initialvalue=ep.get("PROBE_KEY", ""), parent=root)
                 if new_key is not None:
                     ep["PROBE_KEY"] = new_key
@@ -250,9 +328,8 @@ class KashStash:
                 )
                 if new_probe_id is not None:
                     ep["PROBE_ID"] = new_probe_id or DEFAULT_PROBE_ID
-                new_device = simpledialog.askstring("Edit", "Device name:", initialvalue=ep.get("DEVICE", ""), parent=root)
-                if new_device is not None:
-                    ep["DEVICE"] = new_device
+                
+                # Screenshot settings
                 save_screenshots = messagebox.askyesno("Edit", "Save screenshots locally?", parent=root)
                 if save_screenshots:
                     folder = filedialog.askdirectory(title="Screenshot folder", initialdir=ep.get("SCREENSHOT_FOLDER", ""), parent=root)
@@ -261,54 +338,66 @@ class KashStash:
                 else:
                     ep["KEEP_SCREENSHOTS"] = False
                     ep["SCREENSHOT_FOLDER"] = ""
-
-                # Config template digest (used by agent)
-                config_digest_id = simpledialog.askstring(
-                    "Config Digest",
-                    "Config digest id (the digest id from your node where the config template is stored):",
-                    initialvalue=ep.get("CONFIG_DIGEST_ID", ""),
-                    parent=root
-                ) or ""
-                config_digest_node_name = simpledialog.askstring(
-                    "Config Digest",
-                    f"NODE_NAME for config digest (leave blank to use POST ingest node '{ep.get('NODE_NAME','')}'):",
-                    initialvalue=ep.get("CONFIG_DIGEST_NODE_NAME", ep.get("NODE_NAME", "")),
-                    parent=root
-                ) or "" or ep.get("NODE_NAME", "")
-                ep["CONFIG_DIGEST_ID"] = config_digest_id
-                ep["CONFIG_DIGEST_NODE_NAME"] = config_digest_node_name or ep.get("NODE_NAME", "")
-
-                digest_probe_id = simpledialog.askstring(
-                    "Edit (Optional)", "PROBE_ID for GET single digest (blank=skip):",
-                    initialvalue=ep.get("DIGEST_PROBE_ID", DEFAULT_DIGEST_PROBE_ID), parent=root
+                
+                # Pod config
+                new_pod_url = simpledialog.askstring(
+                    "Edit", "Pod API URL:", 
+                    initialvalue=ep.get("POD_URL", ""), parent=root
                 )
-                digest_probe_key = simpledialog.askstring(
-                    "Edit (Optional)", "PROBE_KEY for GET single digest (blank=skip):",
-                    initialvalue=ep.get("DIGEST_PROBE_KEY", ""), parent=root
+                if new_pod_url is not None:
+                    ep["POD_URL"] = new_pod_url
+                new_pod_key = simpledialog.askstring(
+                    "Edit", "Pod API Key (X-POD-KEY):",
+                    initialvalue=ep.get("POD_KEY", ""), parent=root
                 )
-                digest_node_name = simpledialog.askstring(
-                    "Edit (Optional)", f"NODE_NAME for GET single digest (blank=use ingest node '{ep.get('NODE_NAME','')}'):",
-                    initialvalue=ep.get("DIGEST_NODE_NAME", ep.get("NODE_NAME", "")), parent=root
+                if new_pod_key is not None:
+                    ep["POD_KEY"] = new_pod_key
+                
+                # Config settings
+                new_config_id = simpledialog.askstring(
+                    "Edit", "Config digest ID:",
+                    initialvalue=ep.get("CONFIG_DIGEST_ID", ""), parent=root
                 )
-                ep["DIGEST_PROBE_ID"] = digest_probe_id or ""
-                ep["DIGEST_PROBE_KEY"] = digest_probe_key or ""
-                ep["DIGEST_NODE_NAME"] = digest_node_name or ep.get("NODE_NAME", "")
-
-                listdigests_probe_id = simpledialog.askstring(
-                    "Edit (Optional)", "PROBE_ID for LIST digests (blank=skip):",
-                    initialvalue=ep.get("LISTDIGESTS_PROBE_ID", DEFAULT_LISTDIGESTS_PROBE_ID), parent=root
+                if new_config_id is not None:
+                    ep["CONFIG_DIGEST_ID"] = new_config_id
+                new_config_tags = simpledialog.askstring(
+                    "Edit", "Config tags (comma-separated):",
+                    initialvalue=ep.get("CONFIG_DIGEST_TAGS", "agent-config"), parent=root
                 )
-                listdigests_probe_key = simpledialog.askstring(
-                    "Edit (Optional)", "PROBE_KEY for LIST digests (blank=skip):",
-                    initialvalue=ep.get("LISTDIGESTS_PROBE_KEY", ""), parent=root
+                if new_config_tags is not None:
+                    ep["CONFIG_DIGEST_TAGS"] = new_config_tags
+                new_cache = simpledialog.askstring(
+                    "Edit", "Config cache minutes:",
+                    initialvalue=str(ep.get("CONFIG_CACHE_MINUTES", 5)), parent=root
                 )
-                listdigests_node_name = simpledialog.askstring(
-                    "Edit (Optional)", f"NODE_NAME for LIST digests (blank=use ingest node '{ep.get('NODE_NAME','')}'):",
-                    initialvalue=ep.get("LISTDIGESTS_NODE_NAME", ep.get("NODE_NAME", "")), parent=root
+                if new_cache is not None:
+                    ep["CONFIG_CACHE_MINUTES"] = int(new_cache)
+                
+                # Queue tags
+                new_queue_tags = simpledialog.askstring(
+                    "Edit", "Queue tags (comma-separated):",
+                    initialvalue=ep.get("QUEUE_TAGS", "queue"), parent=root
                 )
-                ep["LISTDIGESTS_PROBE_ID"] = listdigests_probe_id or ""
-                ep["LISTDIGESTS_PROBE_KEY"] = listdigests_probe_key or ""
-                ep["LISTDIGESTS_NODE_NAME"] = listdigests_node_name or ep.get("NODE_NAME", "")
+                if new_queue_tags is not None:
+                    ep["QUEUE_TAGS"] = new_queue_tags
+                new_lock_tags = simpledialog.askstring(
+                    "Edit", "Lock tags (comma-separated):",
+                    initialvalue=ep.get("LOCK_TAGS", "lock"), parent=root
+                )
+                if new_lock_tags is not None:
+                    ep["LOCK_TAGS"] = new_lock_tags
+                new_done_tags = simpledialog.askstring(
+                    "Edit", "Done tags (comma-separated):",
+                    initialvalue=ep.get("DONE_TAGS", "done"), parent=root
+                )
+                if new_done_tags is not None:
+                    ep["DONE_TAGS"] = new_done_tags
+                new_logic_tags = simpledialog.askstring(
+                    "Edit", "Logic/script tags (comma-separated):",
+                    initialvalue=ep.get("LOGIC_TAGS", "logic,script,agent-config"), parent=root
+                )
+                if new_logic_tags is not None:
+                    ep["LOGIC_TAGS"] = new_logic_tags
 
                 self.save_config()
         except (ValueError, IndexError):
@@ -488,6 +577,7 @@ class KashStash:
         self.upload_file(filename, file_data, "text/plain", full_tags, note_text, endpoint)
     
     def upload_file(self, filename, file_data, content_type, tags, context, endpoint):
+        """Upload file using POST probe (unchanged - still uses API bastion)"""
         try:
             url = f"https://probes-{endpoint['NODE_NAME']}.xyzpulseinfra.com/api/probes/{endpoint['PROBE_ID']}/run"
             payload = {
@@ -511,48 +601,16 @@ class KashStash:
                 messagebox.showerror("Error", f"Upload failed: {response.status_code}")
         except Exception as e:
             messagebox.showerror("Error", f"Upload error: {e}")
-
-    def get_digest_fetch_conf(self):
-        ep = self.get_current_endpoint() or {}
-        if ep.get("DIGEST_PROBE_ID") and ep.get("DIGEST_PROBE_KEY"):
-            return {
-                "probe_id": ep["DIGEST_PROBE_ID"] or DEFAULT_DIGEST_PROBE_ID,
-                "probe_key": ep["DIGEST_PROBE_KEY"],
-                "node_name": ep.get("DIGEST_NODE_NAME", ep.get("NODE_NAME", ""))
-            }
-        return None
-
-    def get_listdigests_conf(self):
-        ep = self.get_current_endpoint() or {}
-        if ep.get("LISTDIGESTS_PROBE_ID") and ep.get("LISTDIGESTS_PROBE_KEY"):
-            return {
-                "probe_id": ep["LISTDIGESTS_PROBE_ID"] or DEFAULT_LISTDIGESTS_PROBE_ID,
-                "probe_key": ep["LISTDIGESTS_PROBE_KEY"],
-                "node_name": ep.get("LISTDIGESTS_NODE_NAME", ep.get("NODE_NAME", ""))
-            }
-        return None
-
-    def get_config_digest_conf(self):
-        ep = self.get_current_endpoint() or {}
-        if ep.get("CONFIG_DIGEST_ID"):
-            return {
-                "digest_id": ep["CONFIG_DIGEST_ID"],
-                "node_name": ep.get("CONFIG_DIGEST_NODE_NAME", ep.get("NODE_NAME", ""))
-            }
-        return None
+    
     def start_agent_monitor(self):
-        """
-        Starts the agent monitoring/queue boss in a background thread.
-        """
-        # Define the endpoint getter so that QueueBoss always sees the latest endpoint/config
+        """Starts the agent monitoring/queue boss in a background thread."""
         def endpoint_getter():
-            endpoint = self.get_current_endpoint()
-            return endpoint
+            return self.get_current_endpoint()
+        
         self._queue_boss = QueueBoss(endpoint_getter)
         t = threading.Thread(target=self._queue_boss.start, name="QueueBossAgent", daemon=True)
         t.start()
         print("[KashStash] Agent monitor started.")
-
 
 
 def create_tray_icon(app):
@@ -566,9 +624,11 @@ def create_tray_icon(app):
         app.switch_endpoint()
     def on_exit(icon, item):
         icon.stop()
+    
     image = Image.new('RGB', (64, 64), color='green')
     current_endpoint = app.get_current_endpoint()
     current_name = current_endpoint['name'] if current_endpoint else "None"
+    
     menu = pystray.Menu(
         pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
         pystray.Menu.SEPARATOR,
@@ -580,11 +640,13 @@ def create_tray_icon(app):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit)
     )
+    
     icon = pystray.Icon("Kash Stash", image, "Kash Stash", menu)
     try:
         icon.run()
     except KeyboardInterrupt:
         pass
+
 
 if __name__ == "__main__":
     app = KashStash()

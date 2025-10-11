@@ -4,7 +4,7 @@ import os
 import threading
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import base64
 from bash_executor import BashExecutor
@@ -46,173 +46,265 @@ def parse_tags(s):
 def parse_iso8601_as_epoch(s):
     return datetime.fromisoformat(s).timestamp() if s else 0
 
+
+class PodDigestFetcher:
+    """Helper class for fetching digests via Pod API"""
+    
+    def __init__(self, pod_url, pod_key):
+        self.pod_url = pod_url.rstrip('/')
+        self.pod_key = pod_key
+        self.config_cache = {}  # {digest_id: (content, timestamp)}
+    
+    def fetch_digests_by_tags(self, tags, max_pages=10):
+        """
+        Fetch all digests for given tags (comma-separated string).
+        Handles pagination automatically.
+        """
+        if isinstance(tags, list):
+            tags = ','.join(tags)
+        
+        all_digests = []
+        page = 1
+        
+        while page <= max_pages:
+            try:
+                response = requests.get(
+                    f"{self.pod_url}/api/pods/digests",
+                    params={"tags": tags, "page": page, "per_page": 100},
+                    headers={"X-POD-KEY": self.pod_key},
+                    timeout=30
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                entries = data.get('feedentries', [])
+                all_digests.extend(entries)
+                
+                # Check if more pages
+                total_pages = data.get('pages', 1)
+                if page >= total_pages or not entries:
+                    break
+                page += 1
+            except Exception as e:
+                print(f"[PodFetcher] Error fetching page {page}: {e}")
+                break
+        
+        return all_digests
+    
+    def fetch_digest_by_id(self, digest_id, search_tags, use_cache=True, cache_minutes=5):
+        """
+        Fetch a specific digest by ID, searching within the provided tags.
+        Implements caching based on cache_minutes setting.
+        """
+        # Check cache
+        if use_cache and cache_minutes != 0:
+            cached = self.config_cache.get(digest_id)
+            if cached:
+                content, timestamp = cached
+                age_minutes = (datetime.now() - timestamp).seconds / 60
+                
+                if cache_minutes == -1 or age_minutes < cache_minutes:
+                    print(f"[PodFetcher] Using cached content for {digest_id} (age: {age_minutes:.1f} min)")
+                    return content
+        
+        # Fetch fresh
+        print(f"[PodFetcher] Fetching digest {digest_id} from tags: {search_tags}")
+        digests = self.fetch_digests_by_tags(search_tags)
+        
+        for entry in digests:
+            if str(entry.get('id')) == str(digest_id):
+                content = entry.get('content', '')
+                
+                # Update cache
+                if cache_minutes != 0:
+                    self.config_cache[digest_id] = (content, datetime.now())
+                
+                return content
+        
+        raise ValueError(f"Digest {digest_id} not found in tags: {search_tags}")
+    
+    def fetch_digests_with_lookback(self, tags, lookback_seconds):
+        digests = self.fetch_digests_by_tags(tags)
+        print(f"[DEBUG] fetch_digests_with_lookback: Got {len(digests)} digests for tags '{tags}'")
+        
+        cutoff = datetime.utcnow() - timedelta(seconds=lookback_seconds)
+        filtered = []
+        
+        for entry in digests:
+            timestamp_str = (entry.get('created_at') or 
+                        entry.get('created') or 
+                        entry.get('timestamp'))
+            
+            if timestamp_str:
+                try:
+                    if timestamp_str.endswith('Z'):
+                        timestamp_str = timestamp_str[:-1] + '+00:00'
+                    timestamp = datetime.fromisoformat(timestamp_str)
+                    if timestamp >= cutoff:
+                        filtered.append(entry)
+                    #else:
+                        #print(f"[DEBUG] Digest {entry.get('id')} filtered out: {timestamp} < {cutoff}")
+                except Exception as e:
+                    print(f"[DEBUG] Could not parse timestamp for digest {entry.get('id')}: {timestamp_str} - {e}")
+                    filtered.append(entry)  # Include it if we can't parse
+            else:
+                print(f"[DEBUG] Digest {entry.get('id')} has no timestamp field, including it")
+                filtered.append(entry)
+        
+        print(f"[DEBUG] After lookback filter: {len(filtered)} digests remain")
+        return filtered
+
+
 class QueueBoss:
     def __init__(self, endpoint_getter):
         self.bash_executor = BashExecutor()
         self.get_current_endpoint = endpoint_getter
+        self.pod_fetcher = None
+        self._init_pod_fetcher()
+    
+    def _init_pod_fetcher(self):
+        """Initialize pod fetcher if pod config exists"""
+        endpoint = self.get_current_endpoint()
+        if endpoint and endpoint.get('POD_URL') and endpoint.get('POD_KEY'):
+            self.pod_fetcher = PodDigestFetcher(
+                endpoint['POD_URL'],
+                endpoint['POD_KEY']
+            )
+            print(f"[queue_boss] Initialized pod fetcher for {endpoint['POD_URL']}")
+    
     def _now_iso(self):
         return datetime.utcnow().isoformat()
 
-    def fetch_logic_script(self, digest_id):
-        """
-        Fetch the logic/script content from a digest, unwrapping ['output']['data']['content'] or similar.
-        Returns the script content as a UTF-8 string, or None if not found.
-        """
-        import requests, json
+    def get_config_digest(self):
+        """Fetch config YAML using pod API"""
         endpoint = self.get_current_endpoint()
-        node_name = endpoint.get('DIGEST_NODE_NAME', endpoint.get('NODE_NAME',''))
-        probe_id = endpoint.get('DIGEST_PROBE_ID')
-        probe_key = endpoint.get('DIGEST_PROBE_KEY')
-        if not (digest_id and probe_id and probe_key):
-            print("[queue_boss] No LOGIC_DIGEST or probe/key configured.")
+        config_id = endpoint.get('CONFIG_DIGEST_ID')
+        config_tags = endpoint.get('CONFIG_DIGEST_TAGS', 'agent-config')
+        cache_minutes = endpoint.get('CONFIG_CACHE_MINUTES', 5)
+        
+        if not (self.pod_fetcher and config_id):
+            print("[queue_boss] No pod config or config digest ID")
             return None
-
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        payload = {
-            "method": "GET",
-            "endpoint": f"/digests/{digest_id}",
-            "digest_id": digest_id
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
+        
         try:
-            print(f"[queue_boss] Pulling logic digest: {digest_id}")
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
-            resp.raise_for_status()
-            digest_obj = resp.json()
-            print("[queue_boss] Logic digest API response:")
-            print(json.dumps(digest_obj, indent=2))
-            # Robust extraction – check various nestings
-            content = None
-            if "output" in digest_obj and isinstance(digest_obj["output"], dict):
-                output = digest_obj["output"]
-                if "content" in output:
-                    content = output["content"]
-                elif "data" in output and isinstance(output["data"], dict) and "content" in output["data"]:
-                    content = output["data"]["content"]
-            elif "content" in digest_obj:
-                content = digest_obj["content"]
-            if not content:
-                print("[queue_boss] Could not find script content in logic digest!")
-                return None
-            print("[queue_boss] Extracted script (first 200 chars):")
-            print(content[:200])
+            content = self.pod_fetcher.fetch_digest_by_id(
+                config_id,
+                config_tags,
+                use_cache=True,
+                cache_minutes=cache_minutes
+            )
             return content
         except Exception as e:
-            print(f"[queue_boss] Failed to fetch logic digest: {e}")
+            print(f"[queue_boss] Failed to fetch config: {e}")
+            return None
+
+    def fetch_logic_script(self, digest_id):
+        """Fetch logic script by ID using pod API"""
+        if not self.pod_fetcher:
+            print("[queue_boss] No pod configured")
+            return None
+        
+        endpoint = self.get_current_endpoint()
+        logic_tags = endpoint.get('LOGIC_TAGS', 'logic,script,agent-config')
+        
+        try:
+            content = self.pod_fetcher.fetch_digest_by_id(
+                digest_id,
+                logic_tags,
+                use_cache=False  # Don't cache logic scripts
+            )
+            print(f"[queue_boss] Fetched logic script {digest_id} (first 200 chars):")
+            print(content[:200] if content else "Empty")
+            return content
+        except Exception as e:
+            print(f"[queue_boss] Failed to fetch logic script {digest_id}: {e}")
             return None
 
     def fetch_queue_digests(self, queue_tag, lookback_s):
-        """Use the LIST digests probe (listdigests_probe_id/key) to get digests for this queue_tag in the lookback window."""
+        """Fetch queue digests using pod API"""
+        if not self.pod_fetcher:
+            raise RuntimeError("Pod not configured!")
+        
         endpoint = self.get_current_endpoint()
-        probe_id = endpoint.get('LISTDIGESTS_PROBE_ID')
-        probe_key = endpoint.get('LISTDIGESTS_PROBE_KEY')
-        node_name = endpoint.get('LISTDIGESTS_NODE_NAME', endpoint.get('NODE_NAME',''))
-        if not (probe_id and probe_key):
-            raise RuntimeError("List digests endpoint not configured!")
-
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        start_dt = (datetime.utcnow() - datetime.timedelta(seconds=lookback_s)).strftime('%Y-%m-%dT%H:%M:%S')
-        params = {"tags": queue_tag, "start_date": start_dt, "per_page": 1000}
-        payload = {
-            "method": "GET",
-            "endpoint": "/digests",
-            "params": params
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        entries = []
-        for k in ('feedentries','digests','output'):
-            if k in data and isinstance(data[k], list):
-                entries.extend(data[k])
-        if not entries and isinstance(data.get('output',None), list):
-            entries = data['output']
-        return entries
+        # Allow override or use the queue_tag directly
+        queue_tags = endpoint.get('QUEUE_TAGS', queue_tag)
+        
+        if queue_tag and queue_tag not in queue_tags:
+            # If specific queue_tag requested, ensure it's included
+            if isinstance(queue_tags, str):
+                queue_tags = f"{queue_tags},{queue_tag}"
+            else:
+                queue_tags = queue_tag
+        
+        return self.pod_fetcher.fetch_digests_with_lookback(queue_tags, lookback_s)
 
     def fetch_lock_digests(self, lock_tag, lookback_s, device_tag):
-        """Grab all lock digests from the backend in the lookback window for this lock_tag and this device."""
+        """Fetch lock digests using pod API"""
+        if not self.pod_fetcher:
+            raise RuntimeError("Pod not configured!")
+        
         endpoint = self.get_current_endpoint()
-        probe_id = endpoint.get('LISTDIGESTS_PROBE_ID')
-        probe_key = endpoint.get('LISTDIGESTS_PROBE_KEY')
-        node_name = endpoint.get('LISTDIGESTS_NODE_NAME', endpoint.get('NODE_NAME',''))
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        start_dt = (datetime.utcnow() - datetime.timedelta(seconds=lookback_s)).strftime('%Y-%m-%dT%H:%M:%S')
-        params = {"tags": lock_tag, "start_date": start_dt, "per_page": 1000}
-        payload = {
-            "method": "GET",
-            "endpoint": "/digests",
-            "params": params
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        entries = []
-        for k in ('feedentries','digests','output'):
-            if k in data and isinstance(data[k], list):
-                entries.extend(data[k])
-        if not entries and isinstance(data.get('output',None), list):
-            entries = data['output']
-        # Only return locks with a tag for device_tag (if specified)
-        if device_tag:
-            return [d for d in entries if device_tag in parse_tags(d.get("tags"))]
-        return entries
+        lock_tags = endpoint.get('LOCK_TAGS', lock_tag)
+        
+        if lock_tag and lock_tag not in lock_tags:
+            # If specific lock_tag requested, ensure it's included
+            if isinstance(lock_tags, str):
+                lock_tags = f"{lock_tags},{lock_tag}"
+            else:
+                lock_tags = lock_tag
+        
+        digests = self.pod_fetcher.fetch_digests_with_lookback(lock_tags, lookback_s)
+        
+        # NO DEVICE FILTERING - return all lock digests regardless of device
+        # This allows cross-agent locking to work properly
+        return digests
+
+    def fetch_done_digests(self, done_tag, lookback_s, device_tag):
+        """Get backend done digests for the job within lookback window."""
+        if not self.pod_fetcher:
+            raise RuntimeError("Pod not configured!")
+        
+        endpoint = self.get_current_endpoint()
+        done_tags = endpoint.get('DONE_TAGS', done_tag)
+        
+        if done_tag and done_tag not in done_tags:
+            # If specific done_tag requested, ensure it's included
+            if isinstance(done_tags, str):
+                done_tags = f"{done_tags},{done_tag}"
+            else:
+                done_tags = done_tag
+        
+        digests = self.pod_fetcher.fetch_digests_with_lookback(done_tags, lookback_s)
+        
+        # NO DEVICE FILTERING - return all done digests regardless of device
+        # If work was done by ANY agent, it's done
+        return digests
 
     def fetch_fail_digests(self, fail_tag, lookback_s, device_tag):
-        """Same as fetch_lock_digests, but for failure digests (so we can skip ones that failed and shouldn't retry)."""
-        endpoint = self.get_current_endpoint()
-        probe_id = endpoint.get('LISTDIGESTS_PROBE_ID')
-        probe_key = endpoint.get('LISTDIGESTS_PROBE_KEY')
-        node_name = endpoint.get('LISTDIGESTS_NODE_NAME', endpoint.get('NODE_NAME',''))
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        start_dt = (datetime.utcnow() - datetime.timedelta(seconds=lookback_s)).strftime('%Y-%m-%dT%H:%M:%S')
-        params = {"tags": fail_tag, "start_date": start_dt, "per_page": 1000}
-        payload = {
-            "method": "GET",
-            "endpoint": "/digests",
-            "params": params
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        entries = []
-        for k in ('feedentries','digests','output'):
-            if k in data and isinstance(data[k], list):
-                entries.extend(data[k])
-        if not entries and isinstance(data.get('output',None), list):
-            entries = data['output']
-        if device_tag:
-            return [d for d in entries if device_tag in parse_tags(d.get("tags"))]
-        return entries
+        """Fetch failure digests using pod API"""
+        if not self.pod_fetcher:
+            raise RuntimeError("Pod not configured!")
+        
+        # For fail digests, we don't have a default config field, so just use the provided tag
+        digests = self.pod_fetcher.fetch_digests_with_lookback(fail_tag, lookback_s)
+        
+        # NO DEVICE FILTERING - return all fail digests regardless of device
+        # If work failed on ANY agent, it failed
+        return digests
 
     def post_digest(self, content, tags, filename=None, context_prompt=None):
         """
         Post a text digest as a file (base64), matching user/desktop uploader format.
-        - content: bytes or string (text report content)
-        - tags: string, tags to attach
-        - filename: optional; default system_resource_graph_YYYYMMDD_HHMMSS.txt
-        - context_prompt: optional (can pass for trace/debug)
+        Still uses POST probe via API bastion.
         """
         endpoint = self.get_current_endpoint()
         probe_id = endpoint.get('PROBE_ID')
         node_name = endpoint.get('NODE_NAME')
         probe_key = endpoint.get('PROBE_KEY')
+        
         if filename is None:
             filename = f"system_resource_graph_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
+        
         # Encode as needed
         if isinstance(content, str):
             file_bytes = content.encode('utf-8')
@@ -247,9 +339,9 @@ class QueueBoss:
     def process_queue_job(self, job_name, job_conf):
         """
         Implements full queue logic:
-          - finds digests with queue_tag in the lookback window,
-          - skips locked/fail-tagged ones (unless retry_failed is set),
-          - posts lock, runs script, posts done/fail result, handles lockfile
+        - finds digests with queue_tag in the lookback window,
+        - skips locked/fail-tagged ones (unless retry_failed is set),
+        - posts lock, runs script, posts done/fail result, handles lockfile
         """
         queue_obj = job_conf["queue_tag"] if isinstance(job_conf["queue_tag"], dict) else job_conf.get("queue_tag", {})
         queue_tag = job_conf["queue_tag"] if isinstance(job_conf["queue_tag"], str) else queue_obj.get("queue_tag", "")
@@ -276,87 +368,211 @@ class QueueBoss:
         lookback_s = lookback_to_seconds(lookback)
 
         def worker_loop(thread_id):
+            # Define separate lookback windows
+            LOCK_DONE_LOOKBACK = 86400  # 24 hours for lock/done digests
+            
             while True:
                 try:
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching queue digests for tag '{queue_tag}'")
                     digests = self.fetch_queue_digests(queue_tag, lookback_s)
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(digests) if digests else 0} digests")
+                    
                     if not digests:
                         time.sleep(3)
                         continue
 
-                    # === Backend lock and done digests for device
-                    lock_digests_list = self.fetch_lock_digests(lock_tag, lookback_s, device_tag=device_tag)
-                    done_digests_list = self.fetch_done_digests(done_tags[0] if done_tags else '', lookback_s, device_tag=device_tag)
+                    # === Backend lock and done digests for device ===
+                    # CRITICAL FIX: Use longer lookback for lock/done digests
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching lock digests with tag '{lock_tag}' (lookback: {LOCK_DONE_LOOKBACK}s = 24h)")
+                    lock_digests_list = self.fetch_lock_digests(lock_tag, LOCK_DONE_LOOKBACK, device_tag=device_tag)
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(lock_digests_list)} lock digests after fetch")
+                    
+                    # DEBUG: Print FULL lock digest structure for first few
+                    #for i, ld in enumerate(lock_digests_list[:3]):  # First 3 for debugging
+                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Lock digest #{i} FULL STRUCTURE: {ld}")
+                    
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching done digests with tag '{done_tags[0] if done_tags else ''}' (lookback: {LOCK_DONE_LOOKBACK}s = 24h)")
+                    done_digests_list = self.fetch_done_digests(done_tags[0] if done_tags else '', LOCK_DONE_LOOKBACK, device_tag=device_tag)
+                    print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(done_digests_list)} done digests after fetch")
+                    
+                    # DEBUG: Print FULL done digest structure for first few
+                    #for i, dd in enumerate(done_digests_list[:3]):  # First 3 for debugging
+                    #    print(f"[queue_boss DEBUG] Thread {thread_id}: Done digest #{i} FULL STRUCTURE: {dd}")
 
                     # Map digest id -> lock digest
                     locked_map = {}
                     for d in lock_digests_list:
-                        content_id = d.get('content')
+                        content_id = str(d.get('content', '')).strip()
                         if content_id:
                             locked_map[content_id] = d
+                            #print(f"[queue_boss DEBUG] Thread {thread_id}: Lock digest ID={d.get('id')} has content ID: {content_id}")
+                    
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Locked IDs from backend: {list(locked_map.keys())}")
 
-                    # Map digest id -> done digest
-                    done_ids = set(d.get('content') for d in done_digests_list if 'content' in d)
+                    # Extract done IDs from tags - look for done digests that ALSO have processed-{id} tag
+                    done_ids = set()
+                    for d in done_digests_list:
+                        # Check if this done digest has tags field
+                        tags_field = d.get("tags", "")
+                        
+                        # Parse tags - could be string or list
+                        if isinstance(tags_field, str):
+                            tags = parse_tags(tags_field)
+                        elif isinstance(tags_field, list):
+                            tags = tags_field
+                        else:
+                            tags = []
+                        
+                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Done digest ID={d.get('id')} tags type={type(tags_field)} parsed tags: {tags}")
+                        
+                        # Look for processed-{id} tag in this done digest
+                        for tag in tags:
+                            # Handle tag as dict or string
+                            if isinstance(tag, dict):
+                                tag_name = tag.get('name', '')
+                            else:
+                                tag_name = str(tag)
+                            
+                            if tag_name.startswith("processed-"):
+                                done_id = tag_name[10:]  # Remove "processed-" prefix
+                                done_ids.add(done_id)
+                                #print(f"[queue_boss DEBUG] Thread {thread_id}: Found processed ID in done digest: {done_id}")
+                    
+                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Total processed IDs found: {done_ids}")
 
-                    # Candidate work
+                    # Find candidate work
                     work = []
                     for d in digests:
                         digest_id = str(d['id'])
-                        # If already done by this agent in this window, skip forever!
+                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Evaluating digest {digest_id}")
+                        
+                        # Skip if already done
                         if digest_id in done_ids:
+                            #print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} already processed (found in done tags)")
                             continue
+                        #else:
+                            #print(f"[queue_boss DEBUG] Thread {thread_id}: Digest {digest_id} NOT in done_ids {done_ids}")
 
-                        # Locally locked?
-                        if queue_lockfile_exists(job_name, digest_id):
-                            # Check lockfile age, if >timeout, allow retry, else skip
-                            lock_file_path = queue_lockfile_name(job_name, digest_id)
-                            try:
-                                with open(lock_file_path, "r") as lf:
-                                    info = json.load(lf)
-                                created = info.get("created")
-                                if created:
-                                    age = (datetime.utcnow() - datetime.fromisoformat(created)).total_seconds()
-                                    if age < timeout:
-                                        continue  # Lockfile fresh, skip
-                                    else:
-                                        # Stale lock, allow retry (remove lockfile)
-                                        print(f"[queue_boss] Lockfile for {digest_id} is stale, re-trying.")
-                                        remove_queue_lockfile(job_name, digest_id)
-                            except Exception:
-                                pass  # If error with lockfile, allow retry
-
-                        # Backend lock for this id?
-                        backendlock = locked_map.get(digest_id)
-                        if backendlock:
-                            # Also check lock age.
-                            age = self._lock_digest_age_sec(backendlock)
-                            if age < timeout:
+                        # Skip if backend locked
+                        if digest_id in locked_map:
+                            lock_age = self._lock_digest_age_sec(locked_map[digest_id])
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Digest {digest_id} is locked, age: {lock_age:.0f}s")
+                            if lock_age < timeout:
+                                print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} backend locked (age: {lock_age:.0f}s < timeout: {timeout}s)")
                                 continue
                             else:
-                                print(f"[queue_boss] Backend lock for {digest_id} is stale (>timeout), will retry.")
+                                print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} backend lock stale (age: {lock_age:.0f}s > timeout: {timeout}s)")
+                        else:
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Digest {digest_id} NOT in locked_map {list(locked_map.keys())}")
 
-                        # If we reach here, the job is NOT done and NOT locked (or stale lock) -- so process!
+                        # Skip if locally locked (PERMANENT lockfile check)
+                        lockfile_path = queue_lockfile_name(job_name, digest_id)
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Checking lockfile: {lockfile_path}")
+                        if os.path.exists(lockfile_path):
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Lockfile EXISTS at {lockfile_path} - this digest was already processed")
+                            print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} has lockfile (already processed), skipping")
+                            continue
+                        else:
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: NO lockfile at {lockfile_path}")
+
+                        # This digest is available for work
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Adding digest {digest_id} to work queue")
                         work.append(d)
 
                     if not work:
-                        print(f"[queue_boss] ({job_name}) No unlocked/undone queue digests in lookback ({lookback}) for thread {thread_id}")
+                        print(f"[queue_boss] ({job_name}) Thread {thread_id}: No unlocked/undone queue digests in lookback ({lookback})")
                         time.sleep(5)
                         continue
 
+                    print(f"[queue_boss DEBUG] Thread {thread_id}: Processing {len(work)} work items")
+                    
+                    # Process work items one at a time with immediate locking
                     for d in work:
-                        digest_id = d['id']
-                        if queue_lockfile_exists(job_name, digest_id):
+                        digest_id = str(d['id'])
+                        
+                        # CRITICAL: Atomic check-and-create for lockfile
+                        lockfile_path = queue_lockfile_name(job_name, digest_id)
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Attempting to create lockfile atomically for {digest_id} at {lockfile_path}")
+                        
+                        try:
+                            # Use os.open with O_CREAT | O_EXCL for atomic creation
+                            import fcntl
+                            fd = os.open(lockfile_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                            # If we get here, we successfully created the file atomically
+                            lock_data = json.dumps({
+                                "created": datetime.utcnow().isoformat(),
+                                "thread": thread_id,
+                                "info": {}
+                            })
+                            os.write(fd, lock_data.encode())
+                            os.close(fd)
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Successfully created lockfile for {digest_id}")
+                        except FileExistsError:
+                            print(f"[queue_boss] Thread {thread_id}: Lockfile already exists for {digest_id} (another thread got it), skipping")
                             continue
-                        # POST lock digest (content: digest id)
-                        lock_tags = [lock_tag, job_name, queue_tag]
-                        if device_tag: lock_tags.append(device_tag)
-                        self.post_digest(content=str(digest_id), tags=lock_tags)
-                        create_queue_lockfile(job_name, digest_id)
+                        except Exception as e:
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Failed to create lockfile: {e}")
+                            continue
+                        
+                        # Re-fetch recent locks to see if another thread just locked it
+                        # Use shorter lookback for "just now" checks
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Re-fetching recent locks before claiming {digest_id}")
+                        fresh_locks = self.fetch_lock_digests(lock_tag, 60, device_tag=device_tag)  # Last 60 seconds
+                        fresh_locked_ids = {str(ld.get('content', '')).strip() for ld in fresh_locks}
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Fresh locked IDs: {fresh_locked_ids}")
+                        
+                        if digest_id in fresh_locked_ids:
+                            print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} just got backend locked by another thread, keeping our lockfile to prevent future processing")
+                            # DON'T remove the lockfile - keep it to prevent future attempts
+                            continue
+                        
+                        # Also re-check done status
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Re-fetching recent done digests before claiming {digest_id}")
+                        fresh_done = self.fetch_done_digests(done_tags[0] if done_tags else '', 60, device_tag=device_tag)  # Last 60 seconds
+                        fresh_done_ids = set()
+                        for dd in fresh_done:
+                            # Parse tags properly
+                            tags_field = dd.get("tags", "")
+                            if isinstance(tags_field, str):
+                                tags = parse_tags(tags_field)
+                            elif isinstance(tags_field, list):
+                                tags = tags_field
+                            else:
+                                tags = []
+                            
+                            for tag in tags:
+                                if isinstance(tag, dict):
+                                    tag_name = tag.get('name', '')
+                                else:
+                                    tag_name = str(tag)
+                                
+                                if tag_name == f"processed-{digest_id}":
+                                    fresh_done_ids.add(digest_id)
+                                    print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} just got processed by another thread, keeping our lockfile to prevent future processing")
+                                    break
+                        
+                        if digest_id in fresh_done_ids:
+                            continue
+                        
+                        # NOW we can claim this work - post backend lock
+                        print(f"[queue_boss] Thread {thread_id}: Claiming digest {digest_id} - posting backend lock")
+                        
+                        # Post backend lock
+                        lock_tags = [lock_tag, job_name]
+                        if device_tag: 
+                            lock_tags.append(device_tag)
+                        lock_result = self.post_digest(content=str(digest_id), tags=",".join(lock_tags))
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Backend lock post result: {lock_result}")
+                        
                         # --------- actual bash business logic run ---------
                         logic_digest_id = job_conf["logic_digest_id"]
                         script = self.fetch_logic_script(logic_digest_id)
                         if not script:
                             print(f"[queue_boss] Could not fetch script for bash queue job {job_name}")
+                            # Keep the lockfile even on error to prevent retries
+                            print(f"[queue_boss DEBUG] Thread {thread_id}: Keeping lockfile for {digest_id} despite script fetch failure")
                             continue
+                        
                         digest_content_input = d.get("content", "")
                         input_file = None
                         if digest_content_input:
@@ -364,7 +580,8 @@ class QueueBoss:
                             input_file = tempfile.NamedTemporaryFile(delete=False)
                             input_file.write(digest_content_input.encode('utf-8'))
                             input_file.close()
-                        print(f"[queue_boss] ({job_name}) Thread {thread_id} running on digest {digest_id}")
+                        
+                        print(f"[queue_boss] ({job_name}) Thread {thread_id} executing digest {digest_id}")
                         result = self.bash_executor.run_script(
                             job_name, script, job_conf,
                             input_path=input_file.name if input_file else None,
@@ -372,66 +589,174 @@ class QueueBoss:
                         )
                         if input_file:
                             os.unlink(input_file.name)
+                        
                         # ----------- handle result and post as done or fail -----------
                         try:
                             output_obj = json.loads(result["stdout"])
                         except Exception:
                             output_obj = {}
+                        
                         successful = (result["retcode"] == 0) and output_obj.get("content")
+                        
                         if successful:
                             res_tags = done_tags.copy()
                         else:
                             res_tags = fail_tags.copy()
+                        
+                        # Add processed-{id} tag to track completion
+                        res_tags.append(f"processed-{digest_id}")
+                        
                         if "tags" in output_obj:
                             res_tags += parse_tags(output_obj["tags"])
+                        
+                        res_tags.append(job_name)
+                        
                         content_b64 = output_obj.get("content", "")
                         try:
                             post_content = base64.b64decode(content_b64).decode("utf-8")
                         except Exception:
                             post_content = "[Invalid base64 result]" if content_b64 else (result["stdout"] or "")
-                        self.post_digest(content=post_content, tags=res_tags+[job_name])
-                        remove_queue_lockfile(job_name, digest_id)
+                        
+                        print(f"[queue_boss] Thread {thread_id}: Posting result for digest {digest_id} with tags: {','.join(res_tags)}")
+                        result_post = self.post_digest(content=post_content, tags=",".join(res_tags))
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: Result post response: {result_post}")
+                        
+                        # CRITICAL FIX: DON'T REMOVE THE LOCKFILE!
+                        # The lockfile serves as permanent record that this digest was processed
+                        # remove_queue_lockfile(job_name, digest_id)  # <-- REMOVED THIS LINE
+                        print(f"[queue_boss DEBUG] Thread {thread_id}: KEEPING lockfile for {digest_id} to prevent any future reprocessing")
+                        
+                        # Add stagger between processing items
                         time.sleep(random_stagger(thread_id))
+                        
                 except Exception as e:
-                    print(f"[queue_boss] Exception in queue job worker {job_name}: {e}")
+                    print(f"[queue_boss] Exception in queue job worker {job_name} thread {thread_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     time.sleep(5)
-
+            
+        # CREATE THE WORKER THREADS
         for i in range(threads):
-            t = threading.Thread(target=worker_loop, args=(i,), daemon=True)
+            t = threading.Thread(target=worker_loop, args=(i,), daemon=True, name=f"{job_name}-worker-{i}")
             t.start()
-
+            print(f"[queue_boss] Started queue worker thread {i} for job {job_name}")
     def start(self):
         ensure_lock_dir()
-        config_digest = self._fetch_config_yaml()
-        if not config_digest:
-            print("[queue_boss] Could not fetch config digest. Exiting.")
-            return
-        config = config_digest
-
-        for name, job in config.items():
-            if not isinstance(job, dict) or 'type' not in job or 'job' not in job:
-                print(f"[queue_boss] Skipping invalid job entry '{name}' (missing type/job)")
-                continue
-            job_type = job['type']
-            job_conf = job['job']
-            language = job_conf.get('language')
-            if language != 'bash':
-                continue
-
-            if job_type in ('setup', 'onetime'):
-                t = threading.Thread(target=self.run_setup_or_onetime, args=(name, job_conf, job_type), daemon=True)
-                t.start()
-            elif job_type == 'task':
-                self.schedule_task_job(name, job_conf)
-            elif job_type == 'queue':
+        
+        def config_monitor():
+            last_config_fetch = None
+            running_jobs = {}  # Track which jobs are already running
+            
+            while True:
+                # Check if it's time to refresh config
                 endpoint = self.get_current_endpoint()
-                if not (endpoint.get("LISTDIGESTS_PROBE_ID") and endpoint.get("LISTDIGESTS_PROBE_KEY")):
-                    print(f"[queue_boss] ERROR: Queue job {name} requires configured list-digests endpoint! Skipping.")
-                    continue
-                print(f"[queue_boss] Starting queue job thread(s) for {name}")
-                self.process_queue_job(name, job_conf)
-            else:
-                print(f"[queue_boss] Unknown job type {job_type} for job {name}")
+                cache_minutes = endpoint.get('CONFIG_CACHE_MINUTES', 5)
+                
+                # Determine if we should fetch config
+                should_fetch = False
+                if last_config_fetch is None:
+                    # First run
+                    should_fetch = True
+                elif cache_minutes == 0:
+                    # Always refresh (every loop iteration, with a small delay)
+                    should_fetch = True
+                elif cache_minutes == -1:
+                    # Never refresh after initial load
+                    should_fetch = False
+                else:
+                    # Check if cache expired
+                    age_minutes = (datetime.now() - last_config_fetch).total_seconds() / 60
+                    if age_minutes >= cache_minutes:
+                        should_fetch = True
+                
+                if should_fetch:
+                    print(f"[queue_boss] Fetching config (cache_minutes={cache_minutes})...")
+                    
+                    # Re-init pod fetcher in case config changed
+                    self._init_pod_fetcher()
+                    
+                    # Clear config cache to force fresh fetch
+                    if self.pod_fetcher and hasattr(self.pod_fetcher, 'config_cache'):
+                        self.pod_fetcher.config_cache.clear()
+                    
+                    config_digest = self._fetch_config_yaml()
+                    if not config_digest:
+                        print("[queue_boss] Could not fetch config digest. Retrying in 60s...")
+                        time.sleep(60)
+                        continue
+                    
+                    last_config_fetch = datetime.now()
+                    config = config_digest
+                    
+                    # Process all jobs in config
+                    for name, job in config.items():
+                        if not isinstance(job, dict) or 'type' not in job or 'job' not in job:
+                            print(f"[queue_boss] Skipping invalid job entry '{name}' (missing type/job)")
+                            continue
+                        
+                        job_type = job['type']
+                        job_conf = job['job']
+                        language = job_conf.get('language')
+                        
+                        if language != 'bash':
+                            continue
+                        
+                        # Check if this job is already running
+                        job_key = f"{name}:{job_type}"
+                        if job_key in running_jobs:
+                            # Job already running, skip
+                            continue
+                        
+                        # Start the job based on type
+                        if job_type in ('setup', 'onetime'):
+                            t = threading.Thread(
+                                target=self.run_setup_or_onetime, 
+                                args=(name, job_conf, job_type), 
+                                daemon=True
+                            )
+                            t.start()
+                            # Don't mark setup/onetime as permanently running
+                            # They complete and won't restart until lockfile is removed
+                            
+                        elif job_type == 'task':
+                            print(f"[queue_boss] Starting task job: {name}")
+                            self.schedule_task_job(name, job_conf)
+                            running_jobs[job_key] = True
+                            
+                        elif job_type == 'queue':
+                            if not self.pod_fetcher:
+                                print(f"[queue_boss] ERROR: Queue job {name} requires pod configuration! Skipping.")
+                                continue
+                            print(f"[queue_boss] Starting queue job thread(s) for {name}")
+                            self.process_queue_job(name, job_conf)
+                            running_jobs[job_key] = True
+                            
+                        else:
+                            print(f"[queue_boss] Unknown job type {job_type} for job {name}")
+                    
+                    # Check for removed jobs (jobs that were in running_jobs but not in new config)
+                    current_job_keys = {f"{name}:{job['type']}" 
+                                    for name, job in config.items() 
+                                    if isinstance(job, dict) and 'type' in job}
+                    removed_jobs = set(running_jobs.keys()) - current_job_keys
+                    if removed_jobs:
+                        print(f"[queue_boss] Warning: Jobs removed from config but still running: {removed_jobs}")
+                        # Note: We can't easily stop running threads, they'll keep running
+                        # until the process restarts
+                
+                # Sleep before next check
+                if cache_minutes == 0:
+                    time.sleep(30)  # Check every 30 seconds for "always refresh"
+                elif cache_minutes == -1:
+                    time.sleep(3600)  # Check hourly for "never refresh" (just in case)
+                else:
+                    # Sleep for 1 minute, will check if cache expired on next iteration
+                    time.sleep(60)
+        
+        # Start the config monitor in its own thread
+        monitor_thread = threading.Thread(target=config_monitor, daemon=True, name="ConfigMonitor")
+        monitor_thread.start()
+        print("[queue_boss] Config monitor started")
 
     def run_setup_or_onetime(self, job_name, job_conf, job_type):
         """Run a setup or onetime bash job if no lockfile exists/left behind; creates lockfile after run."""
@@ -456,7 +781,7 @@ class QueueBoss:
         lock_tags = [lock_tag, job_name, "setup"]
         if device_tag:
             lock_tags.append(device_tag)
-        self.post_digest(content="setup", tags=lock_tags)
+        self.post_digest(content="setup", tags=",".join(lock_tags))
         create_queue_lockfile(job_name, "setup")
 
         # Run the script
@@ -480,7 +805,8 @@ class QueueBoss:
             post_content = base64.b64decode(content_b64).decode("utf-8")
         except Exception:
             post_content = "[Invalid base64 result]" if content_b64 else (result["stdout"] or "")
-        self.post_digest(content=post_content, tags=res_tags+[job_name])
+        res_tags.append(job_name)
+        self.post_digest(content=post_content, tags=",".join(res_tags))
         print(f"[queue_boss] [{job_name}] Setup/Onetime {('success' if successful else 'fail')}, lockfile created and result posted.")
 
     def schedule_task_job(self, job_name, job_conf):
@@ -537,7 +863,7 @@ class QueueBoss:
                     lock_tags = [lock_tag, job_name, "task"]
                     if device_tag:
                         lock_tags.append(device_tag)
-                    self.post_digest(content=lock_id, tags=lock_tags)
+                    self.post_digest(content=lock_id, tags=",".join(lock_tags))
                     create_queue_lockfile(job_name, lock_id)
                     print(f"[queue_boss] [task] Running {job_name} (thread {thread_idx})")
                     result = self.bash_executor.run_script(job_name, script_content, job_conf)
@@ -558,7 +884,8 @@ class QueueBoss:
                         post_content = base64.b64decode(content_b64).decode("utf-8")
                     except Exception:
                         post_content = "[Invalid base64 result]" if content_b64 else (result["stdout"] or "")
-                    self.post_digest(content=post_content, tags=res_tags+[job_name])
+                    res_tags.append(job_name)
+                    self.post_digest(content=post_content, tags=",".join(res_tags))
                     print(f"[queue_boss] [{job_name}] Task thread {thread_idx} {'success' if successful else 'fail'}, lockfile created and result posted.")
 
                 time.sleep(interval + random.uniform(1, 4))
@@ -569,69 +896,16 @@ class QueueBoss:
             t = threading.Thread(target=task_worker, args=(i, stagger), daemon=True)
             t.start()
 
-    def get_config_digest(self):
-        """
-        Fetch the YAML config digest (the agent config) using your single-digest GET probe.
-        Returns the YAML text content if found, else None.
-        """
-        import json
-        endpoint = self.get_current_endpoint()
-        config_digest_id = endpoint.get('CONFIG_DIGEST_ID')
-        node_name = endpoint.get('CONFIG_DIGEST_NODE_NAME', endpoint.get('NODE_NAME',''))
-        probe_id = endpoint.get('DIGEST_PROBE_ID')
-        probe_key = endpoint.get('DIGEST_PROBE_KEY')
-        if not (config_digest_id and probe_id and probe_key):
-            print("[queue_boss] No CONFIG_DIGEST, single-digest probe, or probe key configured.")
-            return None
-
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        payload = {
-            "method": "GET",
-            "endpoint": f"/digests/{config_digest_id}",
-            "digest_id": config_digest_id
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
-        try:
-            print(f"[queue_boss] Pulling config digest: {config_digest_id}")
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            print("[queue_boss] Config digest API response:")
-            print(json.dumps(data, indent=2))
-            # Try robust extraction
-            content = None
-            if "output" in data and isinstance(data["output"], dict):
-                output = data["output"]
-                if "content" in output:
-                    content = output["content"]
-                elif "data" in output and isinstance(output["data"], dict) and "content" in output["data"]:
-                    content = output["data"]["content"]
-            elif "content" in data:
-                content = data["content"]
-            if not content:
-                print("[queue_boss] Could not find YAML content in config digest!")
-                return None
-            print("[queue_boss] Extracted YAML config (first 200 chars):")
-            print(content[:200])
-            return content
-        except Exception as e:
-            print(f"[queue_boss] Failed to fetch config digest: {e}")
-            return None
-
     def _fetch_config_yaml(self):
         """
         Fetch YAML for agent config and parse.
         Returns a Python dict, or None if fetch or parse failed.
         """
-        yaml_text = self.get_config_digest()   # Now always a string, never a dict!
+        yaml_text = self.get_config_digest()
         if not yaml_text:
             print("[queue_boss] Could not fetch config digest. Exiting.")
             return None
         try:
-            import yaml
             config = yaml.safe_load(yaml_text)
             print("[queue_boss] Parsed agent config YAML.")
             return config
@@ -645,38 +919,6 @@ class QueueBoss:
         except Exception as e:
             print(f"[queue_boss] YAML parse error: {e}")
             return {}
-    def fetch_done_digests(self, done_tag, lookback_s, device_tag):
-        """Get backend done digests for the job from this device within lookback window."""
-        endpoint = self.get_current_endpoint()
-        probe_id = endpoint.get('LISTDIGESTS_PROBE_ID')
-        probe_key = endpoint.get('LISTDIGESTS_PROBE_KEY')
-        node_name = endpoint.get('LISTDIGESTS_NODE_NAME', endpoint.get('NODE_NAME',''))
-        url = f"https://probes-{node_name}.xyzpulseinfra.com/api/probes/{probe_id}/run"
-        start_dt = (datetime.utcnow() - datetime.timedelta(seconds=lookback_s)).strftime('%Y-%m-%dT%H:%M:%S')
-        params = {"tags": done_tag, "start_date": start_dt, "per_page": 1000}
-        payload = {
-            "method": "GET",
-            "endpoint": "/digests",
-            "params": params
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PROBE-KEY": probe_key
-        }
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        entries = []
-        for k in ('feedentries','digests','output'):
-            if k in data and isinstance(data[k], list):
-                entries.extend(data[k])
-        if not entries and isinstance(data.get('output',None), list):
-            entries = data['output']
-        if device_tag:
-            # Only entries with this device in tags
-            return [d for d in entries if device_tag in parse_tags(d.get("tags"))]
-        return entries
-
 
     def _lock_digest_age_sec(self, lock_digest):
         # Given a lock backend digest {"created": ...}, return age in seconds
@@ -691,6 +933,7 @@ class QueueBoss:
         except Exception:
             return 1e9  # treat as ancient/expired
 
+
 if __name__ == "__main__":
     def endpoint_getter():
         cfg_path = os.path.expanduser("~/.kash_stash_config.json")
@@ -698,6 +941,7 @@ if __name__ == "__main__":
             conf = json.load(f)
         idx = conf.get("last_used_endpoint", 0)
         return conf.get("endpoints", [])[idx]
+    
     boss = QueueBoss(endpoint_getter)
     boss.start()
     while True:
