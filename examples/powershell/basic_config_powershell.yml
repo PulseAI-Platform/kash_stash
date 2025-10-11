@@ -1,0 +1,10 @@
+powershell_test_script:
+  type: task
+  job:
+    timing: 10m
+    language: powershell
+    logic_digest_id: 12674
+    done_tags: powershelltest
+    fail_tags: powershelltestfail
+    threads: 1
+    timeout: 60

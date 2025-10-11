@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    {
+      "name": "NODE-NAME",
+      "DEVICE": "matt-desktop",
+      "PROBE_KEY": "YOUR_INGEST_PROBE_KEY",
+      "NODE_NAME": "YOUR_NODE_NAME",
+      "PROBE_ID": "29",
+      "POD_URL": "https://probes-[NODE-NAME].xyzpulseinfra.com",
+      "POD_KEY": "YOUR_POD_KEY",
+      "CONFIG_DIGEST_ID": "YOUR_CONFIG_DIGEST_ID",
+      "CONFIG_DIGEST_TAGS": "automationtest-config",
+      "CONFIG_CACHE_MINUTES": 5,
+      "KEEP_SCREENSHOTS": true,
+      "SCREENSHOT_FOLDER": "/home/you/screenshots"
+    }
+  ],
+  "last_used_endpoint": 0
+}

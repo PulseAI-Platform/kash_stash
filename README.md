@@ -32,9 +32,11 @@ You can generate keys under:
 
 > Tools → Probes → API Keys
 
-Create a key for:
+Create keys for:
 
 * `process_file`
+* `get_digest`
+* `list_digest`
 
 ---
 
@@ -53,20 +55,15 @@ For simple screenshot, note, and file indexing:
 
 ---
 
-## Before continuing with the medium use case you'll need to configure a pod!
-> Go to Tools -> Probes -> Pod Federation to create the pod
-> Record the pod key and your node's probes api url (usually probes-node-name.xyzpulseinfra.com if cloud-hosted) when asked during setup
-> Make sure that all of the tags you plan on using are EXPLICITLY ADVERTISED TO THE POD - for federation-logic-related reasons the wildcard logic is only available through the UI/"Pull" functionality in the pods api
-> Use these tags in your configuration of the pod
-
 ## ⚡ Medium Use Case (Semi-Experimental)
 
 Use this setup if you want your agents to **pull scripts and push monitoring data** to Pulse (but not run business logic or queue-based workloads).
 
-1. Create a new **digest in Kash** with the *example agent configuration* (currently Bash-only). Make sure this is in a tag advertised to the pod you created.
-2. Create a second **digest** with the contents of `linux_agent.bash`. Again, make sure this is in a tag advertised in the pod.
-3. In your template, reference the ID of this second digest as the *logic digest ID*.
-4. Restart the agent if it was already running, just in case.
+1. Enter your **node name** and **`get_digest` key** (from earlier).
+2. Create a new **digest in Kash** with the *example agent configuration* (currently Bash-only).
+3. Create a second **digest** with the contents of `linux_agent.bash`.
+4. In your template, reference the ID of this second digest as the *logic digest ID*.
+5. Restart the agent if it was already running.
 
 You should now start seeing monitoring data flow in.
 Iterate and expand freely — Pulse is built to observe and evolve.

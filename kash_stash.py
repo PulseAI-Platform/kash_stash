@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import time
 import requests
+import argparse
 from datetime import datetime
 from PIL import Image
 import pystray
@@ -20,10 +21,17 @@ CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
 DEFAULT_PROBE_ID = "29"
 
 class KashStash:
-    def __init__(self):
+    def __init__(self, headless=False):
+        self.headless = headless
         self.cfg = self.load_config()
+        # Migrate old configs if needed
+        self.migrate_config()
         if not self.cfg.get("endpoints"):
-            self.setup_initial_config()
+            if self.headless:
+                print("ERROR: No endpoints configured. Run without --headless first to set up configuration.", file=sys.stderr)
+                sys.exit(1)
+            else:
+                self.setup_initial_config()
     
     def load_config(self):
         if os.path.exists(CONFIG_PATH):
@@ -35,6 +43,21 @@ class KashStash:
         with open(CONFIG_PATH, "w") as f:
             json.dump(self.cfg, f, indent=2)
     
+    def migrate_config(self):
+        """Remove deprecated queue tag fields from existing configs"""
+        migrated = False
+        deprecated_fields = ['QUEUE_TAGS', 'LOCK_TAGS', 'DONE_TAGS', 'LOGIC_TAGS']
+        
+        for endpoint in self.cfg.get("endpoints", []):
+            for field in deprecated_fields:
+                if field in endpoint:
+                    del endpoint[field]
+                    migrated = True
+        
+        if migrated:
+            print("[KashStash] Migrated config to new format (removed deprecated tag fields)")
+            self.save_config()
+    
     def setup_initial_config(self):
         root = tk.Tk()
         root.withdraw()
@@ -43,12 +66,12 @@ class KashStash:
             "First run! Let's set up your first endpoint.\n"
             "You'll configure:\n"
             "1. POST probe for uploading files\n"
-            "2. Pod API for fetching digests"
+            "2. Pod API for fetching digests and config"
         )
         
         # Basic endpoint info
         name = simpledialog.askstring("Setup", "Endpoint name:") or "Default"
-        device = simpledialog.askstring("Setup", "Device name:") or ""
+        device = simpledialog.askstring("Setup", "Device name (optional):") or ""
         
         # POST probe configuration (for uploads)
         messagebox.showinfo("Setup", "First, configure the POST probe for uploading files.")
@@ -63,7 +86,7 @@ class KashStash:
             folder = filedialog.askdirectory(title="Screenshot folder") or ""
         
         # Pod configuration (for fetching digests)
-        messagebox.showinfo("Setup", "Now configure the Pod API for fetching digests.")
+        messagebox.showinfo("Setup", "Now configure the Pod API for fetching digests and agent config.")
         pod_url = simpledialog.askstring(
             "Pod Setup", 
             "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):"
@@ -77,7 +100,7 @@ class KashStash:
         ) or ""
         config_tags = simpledialog.askstring(
             "Config",
-            "Tags to search for config digest (comma-separated):",
+            "Tags to search for config and scripts (comma-separated):",
             initialvalue="agent-config"
         ) or "agent-config"
         cache_minutes = simpledialog.askstring(
@@ -85,29 +108,6 @@ class KashStash:
             "Config cache minutes (0=always refresh, -1=cache forever, 5=refresh every 5 min):",
             initialvalue="5"
         ) or "5"
-        
-        # Queue processing tags
-        messagebox.showinfo("Setup", "Finally, specify which tags the pod should pull for queue processing.")
-        queue_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Queue tags to pull (comma-separated):",
-            initialvalue="queue"
-        ) or "queue"
-        lock_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Lock tags to pull (comma-separated):",
-            initialvalue="lock"
-        ) or "lock"
-        done_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Done tags to pull (comma-separated):",
-            initialvalue="done"
-        ) or "done"
-        logic_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Logic/script tags to pull (comma-separated):",
-            initialvalue="logic,script,agent-config"
-        ) or "logic,script,agent-config"
         
         endpoint = {
             "name": name,
@@ -126,12 +126,6 @@ class KashStash:
             "CONFIG_DIGEST_ID": config_digest_id,
             "CONFIG_DIGEST_TAGS": config_tags,
             "CONFIG_CACHE_MINUTES": int(cache_minutes),
-            
-            # Queue tags
-            "QUEUE_TAGS": queue_tags,
-            "LOCK_TAGS": lock_tags,
-            "DONE_TAGS": done_tags,
-            "LOGIC_TAGS": logic_tags,
             
             # Screenshot settings
             "KEEP_SCREENSHOTS": save_screenshots,
@@ -183,7 +177,7 @@ class KashStash:
             root.destroy()
             return
         
-        device = simpledialog.askstring("Add Endpoint", "Device name:", parent=root) or ""
+        device = simpledialog.askstring("Add Endpoint", "Device name (optional):", parent=root) or ""
         
         # POST probe config
         messagebox.showinfo("Add Endpoint", "Configure the POST probe for uploading.", parent=root)
@@ -200,7 +194,7 @@ class KashStash:
             folder = filedialog.askdirectory(title="Screenshot folder", parent=root) or ""
 
         # Pod configuration
-        messagebox.showinfo("Add Endpoint", "Configure the Pod API for fetching.", parent=root)
+        messagebox.showinfo("Add Endpoint", "Configure the Pod API for fetching digests and config.", parent=root)
         pod_url = simpledialog.askstring(
             "Pod Setup", 
             "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):",
@@ -216,7 +210,7 @@ class KashStash:
         ) or ""
         config_tags = simpledialog.askstring(
             "Config",
-            "Tags to search for config (comma-separated):",
+            "Tags to search for config and scripts (comma-separated):",
             initialvalue="agent-config",
             parent=root
         ) or "agent-config"
@@ -226,32 +220,6 @@ class KashStash:
             initialvalue="5",
             parent=root
         ) or "5"
-        
-        # Queue tags
-        queue_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Queue tags to pull (comma-separated):",
-            initialvalue="queue",
-            parent=root
-        ) or "queue"
-        lock_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Lock tags to pull (comma-separated):",
-            initialvalue="lock",
-            parent=root
-        ) or "lock"
-        done_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Done tags to pull (comma-separated):",
-            initialvalue="done",
-            parent=root
-        ) or "done"
-        logic_tags = simpledialog.askstring(
-            "Queue Tags",
-            "Logic/script tags to pull (comma-separated):",
-            initialvalue="logic,script,agent-config",
-            parent=root
-        ) or "logic,script,agent-config"
 
         endpoint = {
             "name": name,
@@ -270,12 +238,6 @@ class KashStash:
             "CONFIG_DIGEST_ID": config_digest_id,
             "CONFIG_DIGEST_TAGS": config_tags,
             "CONFIG_CACHE_MINUTES": int(cache_minutes),
-            
-            # Queue tags
-            "QUEUE_TAGS": queue_tags,
-            "LOCK_TAGS": lock_tags,
-            "DONE_TAGS": done_tags,
-            "LOGIC_TAGS": logic_tags,
             
             # Screenshot settings
             "KEEP_SCREENSHOTS": save_screenshots,
@@ -311,7 +273,7 @@ class KashStash:
                 new_name = simpledialog.askstring("Edit", "Name:", initialvalue=ep.get("name", ""), parent=root)
                 if new_name is not None:
                     ep["name"] = new_name
-                new_device = simpledialog.askstring("Edit", "Device name:", initialvalue=ep.get("DEVICE", ""), parent=root)
+                new_device = simpledialog.askstring("Edit", "Device name (optional):", initialvalue=ep.get("DEVICE", ""), parent=root)
                 if new_device is not None:
                     ep["DEVICE"] = new_device
                 
@@ -361,7 +323,7 @@ class KashStash:
                 if new_config_id is not None:
                     ep["CONFIG_DIGEST_ID"] = new_config_id
                 new_config_tags = simpledialog.askstring(
-                    "Edit", "Config tags (comma-separated):",
+                    "Edit", "Config and script tags (comma-separated):",
                     initialvalue=ep.get("CONFIG_DIGEST_TAGS", "agent-config"), parent=root
                 )
                 if new_config_tags is not None:
@@ -372,32 +334,6 @@ class KashStash:
                 )
                 if new_cache is not None:
                     ep["CONFIG_CACHE_MINUTES"] = int(new_cache)
-                
-                # Queue tags
-                new_queue_tags = simpledialog.askstring(
-                    "Edit", "Queue tags (comma-separated):",
-                    initialvalue=ep.get("QUEUE_TAGS", "queue"), parent=root
-                )
-                if new_queue_tags is not None:
-                    ep["QUEUE_TAGS"] = new_queue_tags
-                new_lock_tags = simpledialog.askstring(
-                    "Edit", "Lock tags (comma-separated):",
-                    initialvalue=ep.get("LOCK_TAGS", "lock"), parent=root
-                )
-                if new_lock_tags is not None:
-                    ep["LOCK_TAGS"] = new_lock_tags
-                new_done_tags = simpledialog.askstring(
-                    "Edit", "Done tags (comma-separated):",
-                    initialvalue=ep.get("DONE_TAGS", "done"), parent=root
-                )
-                if new_done_tags is not None:
-                    ep["DONE_TAGS"] = new_done_tags
-                new_logic_tags = simpledialog.askstring(
-                    "Edit", "Logic/script tags (comma-separated):",
-                    initialvalue=ep.get("LOGIC_TAGS", "logic,script,agent-config"), parent=root
-                )
-                if new_logic_tags is not None:
-                    ep["LOGIC_TAGS"] = new_logic_tags
 
                 self.save_config()
         except (ValueError, IndexError):
@@ -596,21 +532,45 @@ class KashStash:
             }
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code == 200:
-                messagebox.showinfo("Success", f"Upload completed!\nTags: {tags}")
+                if self.headless:
+                    print(f"[KashStash] Upload completed! Tags: {tags}")
+                else:
+                    messagebox.showinfo("Success", f"Upload completed!\nTags: {tags}")
             else:
-                messagebox.showerror("Error", f"Upload failed: {response.status_code}")
+                if self.headless:
+                    print(f"[KashStash] Upload failed: {response.status_code}")
+                else:
+                    messagebox.showerror("Error", f"Upload failed: {response.status_code}")
         except Exception as e:
-            messagebox.showerror("Error", f"Upload error: {e}")
+            if self.headless:
+                print(f"[KashStash] Upload error: {e}")
+            else:
+                messagebox.showerror("Error", f"Upload error: {e}")
     
     def start_agent_monitor(self):
-        """Starts the agent monitoring/queue boss in a background thread."""
+        """Starts the agent monitoring/queue boss."""
         def endpoint_getter():
             return self.get_current_endpoint()
         
         self._queue_boss = QueueBoss(endpoint_getter)
-        t = threading.Thread(target=self._queue_boss.start, name="QueueBossAgent", daemon=True)
-        t.start()
-        print("[KashStash] Agent monitor started.")
+        
+        if self.headless:
+            # In headless mode, start queue boss (spawns daemon threads)
+            print("[KashStash] Starting agent monitor in headless mode...")
+            endpoint = self.get_current_endpoint()
+            if endpoint:
+                print(f"[KashStash] Using endpoint: {endpoint['name']}")
+                print(f"[KashStash] Config digest: {endpoint.get('CONFIG_DIGEST_ID')} (tags: {endpoint.get('CONFIG_DIGEST_TAGS')})")
+                print(f"[KashStash] Cache: {endpoint.get('CONFIG_CACHE_MINUTES')} minutes")
+            else:
+                print("[KashStash] WARNING: No endpoint configured!")
+            self._queue_boss.start()
+            print("[KashStash] Queue boss started (running in background threads)")
+        else:
+            # In GUI mode, run in background thread (non-blocking)
+            t = threading.Thread(target=self._queue_boss.start, name="QueueBossAgent", daemon=True)
+            t.start()
+            print("[KashStash] Agent monitor started in background.")
 
 
 def create_tray_icon(app):
@@ -649,6 +609,26 @@ def create_tray_icon(app):
 
 
 if __name__ == "__main__":
-    app = KashStash()
-    app.start_agent_monitor()
-    create_tray_icon(app)
+    parser = argparse.ArgumentParser(description="Kash Stash - Screenshot and note uploader with queue processing")
+    parser.add_argument("--headless", action="store_true", 
+                       help="Run in headless mode (no GUI, just queue boss)")
+    args = parser.parse_args()
+    
+    app = KashStash(headless=args.headless)
+    
+    if args.headless:
+        # Headless mode: start the agent monitor (spawns daemon threads) and keep main thread alive
+        print("[KashStash] Running in headless mode (Ctrl+C to stop)")
+        app.start_agent_monitor()
+        
+        # Keep main thread alive indefinitely
+        try:
+            while True:
+                time.sleep(3600)  # Sleep for an hour at a time
+        except KeyboardInterrupt:
+            print("\n[KashStash] Shutting down...")
+            sys.exit(0)
+    else:
+        # GUI mode: start agent monitor in background, then create tray icon
+        app.start_agent_monitor()
+        create_tray_icon(app)

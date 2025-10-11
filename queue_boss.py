@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import json
 import base64
 from bash_executor import BashExecutor
+from python_executor import PythonExecutor
+from powershell_executor import PowerShellExecutor
 
 LOCK_PATH = os.path.expanduser("~/.kash_stash_locks")
 
@@ -142,8 +144,6 @@ class PodDigestFetcher:
                     timestamp = datetime.fromisoformat(timestamp_str)
                     if timestamp >= cutoff:
                         filtered.append(entry)
-                    #else:
-                        #print(f"[DEBUG] Digest {entry.get('id')} filtered out: {timestamp} < {cutoff}")
                 except Exception as e:
                     print(f"[DEBUG] Could not parse timestamp for digest {entry.get('id')}: {timestamp_str} - {e}")
                     filtered.append(entry)  # Include it if we can't parse
@@ -158,6 +158,8 @@ class PodDigestFetcher:
 class QueueBoss:
     def __init__(self, endpoint_getter):
         self.bash_executor = BashExecutor()
+        self.python_executor = PythonExecutor()
+        self.powershell_executor = PowerShellExecutor()
         self.get_current_endpoint = endpoint_getter
         self.pod_fetcher = None
         self._init_pod_fetcher()
@@ -171,6 +173,18 @@ class QueueBoss:
                 endpoint['POD_KEY']
             )
             print(f"[queue_boss] Initialized pod fetcher for {endpoint['POD_URL']}")
+    
+    def get_executor_for_language(self, language):
+        """Get the appropriate executor for the job language"""
+        language = language.lower()  # Normalize
+        if language in ('bash', 'sh'):
+            return self.bash_executor
+        elif language in ('python', 'python3', 'py'):
+            return self.python_executor
+        elif language in ('powershell', 'pwsh', 'ps1'):
+            return self.powershell_executor
+        else:
+            raise ValueError(f"Unsupported language: {language}")
     
     def _now_iso(self):
         return datetime.utcnow().isoformat()
@@ -205,12 +219,14 @@ class QueueBoss:
             return None
         
         endpoint = self.get_current_endpoint()
-        logic_tags = endpoint.get('LOGIC_TAGS', 'logic,script,agent-config')
+        # Use CONFIG_DIGEST_TAGS as the search space for scripts
+        # Scripts are usually in the same tags as configs
+        script_tags = endpoint.get('CONFIG_DIGEST_TAGS', 'agent-config')
         
         try:
             content = self.pod_fetcher.fetch_digest_by_id(
                 digest_id,
-                logic_tags,
+                script_tags,
                 use_cache=False  # Don't cache logic scripts
             )
             print(f"[queue_boss] Fetched logic script {digest_id} (first 200 chars):")
@@ -221,71 +237,43 @@ class QueueBoss:
             return None
 
     def fetch_queue_digests(self, queue_tag, lookback_s):
-        """Fetch queue digests using pod API"""
+        """Fetch queue digests using pod API - uses job-specific queue tag"""
         if not self.pod_fetcher:
             raise RuntimeError("Pod not configured!")
         
-        endpoint = self.get_current_endpoint()
-        # Allow override or use the queue_tag directly
-        queue_tags = endpoint.get('QUEUE_TAGS', queue_tag)
-        
-        if queue_tag and queue_tag not in queue_tags:
-            # If specific queue_tag requested, ensure it's included
-            if isinstance(queue_tags, str):
-                queue_tags = f"{queue_tags},{queue_tag}"
-            else:
-                queue_tags = queue_tag
-        
-        return self.pod_fetcher.fetch_digests_with_lookback(queue_tags, lookback_s)
+        # Just use the queue_tag from the job config directly
+        return self.pod_fetcher.fetch_digests_with_lookback(queue_tag, lookback_s)
 
     def fetch_lock_digests(self, lock_tag, lookback_s, device_tag):
-        """Fetch lock digests using pod API"""
+        """Fetch lock digests using pod API - uses job-specific lock tag"""
         if not self.pod_fetcher:
             raise RuntimeError("Pod not configured!")
         
-        endpoint = self.get_current_endpoint()
-        lock_tags = endpoint.get('LOCK_TAGS', lock_tag)
-        
-        if lock_tag and lock_tag not in lock_tags:
-            # If specific lock_tag requested, ensure it's included
-            if isinstance(lock_tags, str):
-                lock_tags = f"{lock_tags},{lock_tag}"
-            else:
-                lock_tags = lock_tag
-        
-        digests = self.pod_fetcher.fetch_digests_with_lookback(lock_tags, lookback_s)
+        # Just use the lock_tag from the job config directly
+        digests = self.pod_fetcher.fetch_digests_with_lookback(lock_tag, lookback_s)
         
         # NO DEVICE FILTERING - return all lock digests regardless of device
         # This allows cross-agent locking to work properly
         return digests
 
     def fetch_done_digests(self, done_tag, lookback_s, device_tag):
-        """Get backend done digests for the job within lookback window."""
+        """Get backend done digests for the job within lookback window - uses job-specific done tag"""
         if not self.pod_fetcher:
             raise RuntimeError("Pod not configured!")
         
-        endpoint = self.get_current_endpoint()
-        done_tags = endpoint.get('DONE_TAGS', done_tag)
-        
-        if done_tag and done_tag not in done_tags:
-            # If specific done_tag requested, ensure it's included
-            if isinstance(done_tags, str):
-                done_tags = f"{done_tags},{done_tag}"
-            else:
-                done_tags = done_tag
-        
-        digests = self.pod_fetcher.fetch_digests_with_lookback(done_tags, lookback_s)
+        # Just use the done_tag from the job config directly
+        digests = self.pod_fetcher.fetch_digests_with_lookback(done_tag, lookback_s)
         
         # NO DEVICE FILTERING - return all done digests regardless of device
         # If work was done by ANY agent, it's done
         return digests
 
     def fetch_fail_digests(self, fail_tag, lookback_s, device_tag):
-        """Fetch failure digests using pod API"""
+        """Fetch failure digests using pod API - uses job-specific fail tag"""
         if not self.pod_fetcher:
             raise RuntimeError("Pod not configured!")
         
-        # For fail digests, we don't have a default config field, so just use the provided tag
+        # Just use the fail_tag from the job config directly
         digests = self.pod_fetcher.fetch_digests_with_lookback(fail_tag, lookback_s)
         
         # NO DEVICE FILTERING - return all fail digests regardless of device
@@ -303,7 +291,7 @@ class QueueBoss:
         probe_key = endpoint.get('PROBE_KEY')
         
         if filename is None:
-            filename = f"system_resource_graph_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
+            filename = f"agent_output_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
         
         # Encode as needed
         if isinstance(content, str):
@@ -356,6 +344,11 @@ class QueueBoss:
         timeout = int(job_conf.get("timeout", 900))
         random_stagger = lambda i: random.uniform(2, 5) * i
 
+        # Validate required tags
+        if not queue_tag:
+            print(f"[queue_boss] ERROR: Queue job {job_name} has no queue_tag defined!")
+            return
+
         # Lookback string to seconds
         def lookback_to_seconds(lb):
             units = {'s':1, 'm':60, 'h':3600, 'd':86400, 'w':604800}
@@ -373,31 +366,16 @@ class QueueBoss:
             
             while True:
                 try:
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching queue digests for tag '{queue_tag}'")
                     digests = self.fetch_queue_digests(queue_tag, lookback_s)
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(digests) if digests else 0} digests")
                     
                     if not digests:
                         time.sleep(3)
                         continue
 
                     # === Backend lock and done digests for device ===
-                    # CRITICAL FIX: Use longer lookback for lock/done digests
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching lock digests with tag '{lock_tag}' (lookback: {LOCK_DONE_LOOKBACK}s = 24h)")
                     lock_digests_list = self.fetch_lock_digests(lock_tag, LOCK_DONE_LOOKBACK, device_tag=device_tag)
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(lock_digests_list)} lock digests after fetch")
-                    
-                    # DEBUG: Print FULL lock digest structure for first few
-                    #for i, ld in enumerate(lock_digests_list[:3]):  # First 3 for debugging
-                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Lock digest #{i} FULL STRUCTURE: {ld}")
-                    
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Fetching done digests with tag '{done_tags[0] if done_tags else ''}' (lookback: {LOCK_DONE_LOOKBACK}s = 24h)")
                     done_digests_list = self.fetch_done_digests(done_tags[0] if done_tags else '', LOCK_DONE_LOOKBACK, device_tag=device_tag)
                     print(f"[queue_boss DEBUG] Thread {thread_id}: Found {len(done_digests_list)} done digests after fetch")
-                    
-                    # DEBUG: Print FULL done digest structure for first few
-                    #for i, dd in enumerate(done_digests_list[:3]):  # First 3 for debugging
-                    #    print(f"[queue_boss DEBUG] Thread {thread_id}: Done digest #{i} FULL STRUCTURE: {dd}")
 
                     # Map digest id -> lock digest
                     locked_map = {}
@@ -405,9 +383,6 @@ class QueueBoss:
                         content_id = str(d.get('content', '')).strip()
                         if content_id:
                             locked_map[content_id] = d
-                            #print(f"[queue_boss DEBUG] Thread {thread_id}: Lock digest ID={d.get('id')} has content ID: {content_id}")
-                    
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Locked IDs from backend: {list(locked_map.keys())}")
 
                     # Extract done IDs from tags - look for done digests that ALSO have processed-{id} tag
                     done_ids = set()
@@ -423,8 +398,6 @@ class QueueBoss:
                         else:
                             tags = []
                         
-                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Done digest ID={d.get('id')} tags type={type(tags_field)} parsed tags: {tags}")
-                        
                         # Look for processed-{id} tag in this done digest
                         for tag in tags:
                             # Handle tag as dict or string
@@ -436,22 +409,15 @@ class QueueBoss:
                             if tag_name.startswith("processed-"):
                                 done_id = tag_name[10:]  # Remove "processed-" prefix
                                 done_ids.add(done_id)
-                                #print(f"[queue_boss DEBUG] Thread {thread_id}: Found processed ID in done digest: {done_id}")
-                    
-                    #print(f"[queue_boss DEBUG] Thread {thread_id}: Total processed IDs found: {done_ids}")
 
                     # Find candidate work
                     work = []
                     for d in digests:
                         digest_id = str(d['id'])
-                        #print(f"[queue_boss DEBUG] Thread {thread_id}: Evaluating digest {digest_id}")
                         
                         # Skip if already done
                         if digest_id in done_ids:
-                            #print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} already processed (found in done tags)")
                             continue
-                        #else:
-                            #print(f"[queue_boss DEBUG] Thread {thread_id}: Digest {digest_id} NOT in done_ids {done_ids}")
 
                         # Skip if backend locked
                         if digest_id in locked_map:
@@ -462,18 +428,13 @@ class QueueBoss:
                                 continue
                             else:
                                 print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} backend lock stale (age: {lock_age:.0f}s > timeout: {timeout}s)")
-                        else:
-                            print(f"[queue_boss DEBUG] Thread {thread_id}: Digest {digest_id} NOT in locked_map {list(locked_map.keys())}")
 
                         # Skip if locally locked (PERMANENT lockfile check)
                         lockfile_path = queue_lockfile_name(job_name, digest_id)
                         print(f"[queue_boss DEBUG] Thread {thread_id}: Checking lockfile: {lockfile_path}")
                         if os.path.exists(lockfile_path):
-                            print(f"[queue_boss DEBUG] Thread {thread_id}: Lockfile EXISTS at {lockfile_path} - this digest was already processed")
                             print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} has lockfile (already processed), skipping")
                             continue
-                        else:
-                            print(f"[queue_boss DEBUG] Thread {thread_id}: NO lockfile at {lockfile_path}")
 
                         # This digest is available for work
                         print(f"[queue_boss DEBUG] Thread {thread_id}: Adding digest {digest_id} to work queue")
@@ -496,7 +457,6 @@ class QueueBoss:
                         
                         try:
                             # Use os.open with O_CREAT | O_EXCL for atomic creation
-                            import fcntl
                             fd = os.open(lockfile_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                             # If we get here, we successfully created the file atomically
                             lock_data = json.dumps({
@@ -515,7 +475,6 @@ class QueueBoss:
                             continue
                         
                         # Re-fetch recent locks to see if another thread just locked it
-                        # Use shorter lookback for "just now" checks
                         print(f"[queue_boss DEBUG] Thread {thread_id}: Re-fetching recent locks before claiming {digest_id}")
                         fresh_locks = self.fetch_lock_digests(lock_tag, 60, device_tag=device_tag)  # Last 60 seconds
                         fresh_locked_ids = {str(ld.get('content', '')).strip() for ld in fresh_locks}
@@ -523,7 +482,6 @@ class QueueBoss:
                         
                         if digest_id in fresh_locked_ids:
                             print(f"[queue_boss] Thread {thread_id}: Digest {digest_id} just got backend locked by another thread, keeping our lockfile to prevent future processing")
-                            # DON'T remove the lockfile - keep it to prevent future attempts
                             continue
                         
                         # Also re-check done status
@@ -531,7 +489,6 @@ class QueueBoss:
                         fresh_done = self.fetch_done_digests(done_tags[0] if done_tags else '', 60, device_tag=device_tag)  # Last 60 seconds
                         fresh_done_ids = set()
                         for dd in fresh_done:
-                            # Parse tags properly
                             tags_field = dd.get("tags", "")
                             if isinstance(tags_field, str):
                                 tags = parse_tags(tags_field)
@@ -564,12 +521,15 @@ class QueueBoss:
                         lock_result = self.post_digest(content=str(digest_id), tags=",".join(lock_tags))
                         print(f"[queue_boss DEBUG] Thread {thread_id}: Backend lock post result: {lock_result}")
                         
-                        # --------- actual bash business logic run ---------
-                        logic_digest_id = job_conf["logic_digest_id"]
+                        # --------- actual business logic run ---------
+                        logic_digest_id = job_conf.get("logic_digest_id")
+                        if not logic_digest_id:
+                            print(f"[queue_boss] ERROR: No logic_digest_id for queue job {job_name}")
+                            continue
+                            
                         script = self.fetch_logic_script(logic_digest_id)
                         if not script:
-                            print(f"[queue_boss] Could not fetch script for bash queue job {job_name}")
-                            # Keep the lockfile even on error to prevent retries
+                            print(f"[queue_boss] Could not fetch script for queue job {job_name}")
                             print(f"[queue_boss DEBUG] Thread {thread_id}: Keeping lockfile for {digest_id} despite script fetch failure")
                             continue
                         
@@ -581,8 +541,18 @@ class QueueBoss:
                             input_file.write(digest_content_input.encode('utf-8'))
                             input_file.close()
                         
-                        print(f"[queue_boss] ({job_name}) Thread {thread_id} executing digest {digest_id}")
-                        result = self.bash_executor.run_script(
+                        # Get the right executor based on language
+                        language = job_conf.get('language', 'bash')
+                        try:
+                            executor = self.get_executor_for_language(language)
+                        except ValueError as e:
+                            print(f"[queue_boss] {e} for job {job_name}")
+                            if input_file:
+                                os.unlink(input_file.name)
+                            continue
+                        
+                        print(f"[queue_boss] ({job_name}) Thread {thread_id} executing digest {digest_id} with {language}")
+                        result = executor.run_script(
                             job_name, script, job_conf,
                             input_path=input_file.name if input_file else None,
                             job_digest=d
@@ -623,7 +593,6 @@ class QueueBoss:
                         
                         # CRITICAL FIX: DON'T REMOVE THE LOCKFILE!
                         # The lockfile serves as permanent record that this digest was processed
-                        # remove_queue_lockfile(job_name, digest_id)  # <-- REMOVED THIS LINE
                         print(f"[queue_boss DEBUG] Thread {thread_id}: KEEPING lockfile for {digest_id} to prevent any future reprocessing")
                         
                         # Add stagger between processing items
@@ -640,6 +609,7 @@ class QueueBoss:
             t = threading.Thread(target=worker_loop, args=(i,), daemon=True, name=f"{job_name}-worker-{i}")
             t.start()
             print(f"[queue_boss] Started queue worker thread {i} for job {job_name}")
+
     def start(self):
         ensure_lock_dir()
         
@@ -696,9 +666,11 @@ class QueueBoss:
                         
                         job_type = job['type']
                         job_conf = job['job']
-                        language = job_conf.get('language')
+                        language = job_conf.get('language', 'bash')
                         
-                        if language != 'bash':
+                        # Check if language is supported
+                        if language.lower() not in ('bash', 'sh', 'python', 'python3', 'py', 'powershell', 'pwsh', 'ps1'):
+                            print(f"[queue_boss] Unsupported language '{language}' for job {name}")
                             continue
                         
                         # Check if this job is already running
@@ -719,7 +691,7 @@ class QueueBoss:
                             # They complete and won't restart until lockfile is removed
                             
                         elif job_type == 'task':
-                            print(f"[queue_boss] Starting task job: {name}")
+                            print(f"[queue_boss] Starting task job: {name} ({language})")
                             self.schedule_task_job(name, job_conf)
                             running_jobs[job_key] = True
                             
@@ -727,7 +699,7 @@ class QueueBoss:
                             if not self.pod_fetcher:
                                 print(f"[queue_boss] ERROR: Queue job {name} requires pod configuration! Skipping.")
                                 continue
-                            print(f"[queue_boss] Starting queue job thread(s) for {name}")
+                            print(f"[queue_boss] Starting queue job thread(s) for {name} ({language})")
                             self.process_queue_job(name, job_conf)
                             running_jobs[job_key] = True
                             
@@ -759,7 +731,7 @@ class QueueBoss:
         print("[queue_boss] Config monitor started")
 
     def run_setup_or_onetime(self, job_name, job_conf, job_type):
-        """Run a setup or onetime bash job if no lockfile exists/left behind; creates lockfile after run."""
+        """Run a setup or onetime job if no lockfile exists/left behind; creates lockfile after run."""
         if queue_lockfile_exists(job_name, "setup"):
             print(f"[queue_boss] Lockfile for setup/onetime job '{job_name}' exists, skipping.")
             return
@@ -784,9 +756,17 @@ class QueueBoss:
         self.post_digest(content="setup", tags=",".join(lock_tags))
         create_queue_lockfile(job_name, "setup")
 
+        # Get the right executor
+        language = job_conf.get('language', 'bash')
+        try:
+            executor = self.get_executor_for_language(language)
+        except ValueError as e:
+            print(f"[queue_boss] {e} for job {job_name}")
+            return
+
         # Run the script
-        print(f"[queue_boss] Running {job_type} bash job {job_name}")
-        result = self.bash_executor.run_script(job_name, script_content, job_conf)
+        print(f"[queue_boss] Running {job_type} {language} job {job_name}")
+        result = executor.run_script(job_name, script_content, job_conf)
 
         # Handle result, post done/fail as needed
         try:
@@ -810,7 +790,7 @@ class QueueBoss:
         print(f"[queue_boss] [{job_name}] Setup/Onetime {('success' if successful else 'fail')}, lockfile created and result posted.")
 
     def schedule_task_job(self, job_name, job_conf):
-        """Schedule a recurring bash job."""
+        """Schedule a recurring job."""
         timing = job_conf.get("timing")
         if not timing:
             print(f"[queue_boss] Task {job_name} has no timing entry, skipping.")
@@ -859,14 +839,22 @@ class QueueBoss:
                         print(f"[queue_boss] No script found for task {job_name}")
                         time.sleep(5)
                         continue
-                    # Post lock
-                    lock_tags = [lock_tag, job_name, "task"]
-                    if device_tag:
-                        lock_tags.append(device_tag)
-                    self.post_digest(content=lock_id, tags=",".join(lock_tags))
+                    
+                    # Get the right executor
+                    language = job_conf.get('language', 'bash')
+                    try:
+                        executor = self.get_executor_for_language(language)
+                    except ValueError as e:
+                        print(f"[queue_boss] {e} for task {job_name}")
+                        time.sleep(5)
+                        continue
+                    
+                    # Tasks only need local lockfiles, not backend locks
                     create_queue_lockfile(job_name, lock_id)
-                    print(f"[queue_boss] [task] Running {job_name} (thread {thread_idx})")
-                    result = self.bash_executor.run_script(job_name, script_content, job_conf)
+                    
+                    print(f"[queue_boss] [task] Running {job_name} (thread {thread_idx}) with {language}")
+                    result = executor.run_script(job_name, script_content, job_conf)
+                    
                     # Handle result
                     try:
                         output_obj = json.loads(result["stdout"])
