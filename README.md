@@ -6,6 +6,13 @@
 
 ---
 
+## OSX-Specific Notes
+* screenshots and notes are not working yet on osx due to thread safety/permissions differences between windows/linux/osx
+* as a result the kash stash binary can only be used for metrics and automation/work queues on osx, but it does work.
+* building and running your own binary tends to get around performance issues better than trying to run a binary compiled on another machine
+* installation requires dev tools and brew/git/python
+
+
 ## 🧩 Requirements
 
 * **Python 3.7+** (only if running the `.py` version)
@@ -20,7 +27,14 @@
 ### From Source
 
 ```bash
-pip install pillow pystray requests
+pip install -r requirements.txt
+pip install psutil (if using the kash stash binary for monitoring in python scripts on this host)
+bash build.sh
+```
+```powershell
+pip install -r requirements.txt
+pip install psutil (if using the kash stash binary for monitoring in python scripts on this host)
+./build.ps1
 ```
 
 ### Running the Binary
@@ -32,11 +46,9 @@ You can generate keys under:
 
 > Tools → Probes → API Keys
 
-Create keys for:
+Create a key for:
 
 * `process_file`
-* `get_digest`
-* `list_digest`
 
 ---
 
@@ -55,15 +67,20 @@ For simple screenshot, note, and file indexing:
 
 ---
 
+## Before continuing with the medium use case you'll need to configure a pod!
+> Go to Tools -> Probes -> Pod Federation to create the pod
+> Record the pod key and your node's probes api url (usually probes-node-name.xyzpulseinfra.com if cloud-hosted) when asked during setup
+> Make sure that all of the tags you plan on using are EXPLICITLY ADVERTISED TO THE POD - for federation-logic-related reasons the wildcard logic is only available through the UI/"Pull" functionality in the pods api
+> Use these tags in your configuration of the pod
+
 ## ⚡ Medium Use Case (Semi-Experimental)
 
 Use this setup if you want your agents to **pull scripts and push monitoring data** to Pulse (but not run business logic or queue-based workloads).
 
-1. Enter your **node name** and **`get_digest` key** (from earlier).
-2. Create a new **digest in Kash** with the *example agent configuration* (currently Bash-only).
-3. Create a second **digest** with the contents of `linux_agent.bash`.
-4. In your template, reference the ID of this second digest as the *logic digest ID*.
-5. Restart the agent if it was already running.
+1. Create a new **digest in Kash** with the *example agent configuration* (currently Bash-only). Make sure this is in a tag advertised to the pod you created.
+2. Create a second **digest** with the contents of `linux_agent.bash`. Again, make sure this is in a tag advertised in the pod.
+3. In your template, reference the ID of this second digest as the *logic digest ID*.
+4. Restart the agent if it was already running, just in case.
 
 For reference, the config for a medium-level use case should look like this:
 
@@ -165,5 +182,3 @@ For highly sensitive use-cases:
     **Phase B** → Tag B (processing)
     **Phase C** → Tag C (output or action)
 * This avoids unsafe internal network chatter and keeps logic modular and auditable.
-
-test
