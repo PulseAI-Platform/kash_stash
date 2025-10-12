@@ -453,17 +453,67 @@ class KashStash:
         if not endpoint:
             messagebox.showerror("Error", "No endpoint configured!")
             return
+        
         fd, tmpfile = tempfile.mkstemp(suffix=".png")
         os.close(fd)
+        
         try:
-            subprocess.run(["gnome-screenshot", "-a", "-f", tmpfile], check=True)
-            for _ in range(50):  # 5 seconds max
-                time.sleep(0.1)
-                if os.path.exists(tmpfile) and os.path.getsize(tmpfile) > 0:
-                    break
+            if sys.platform.startswith('win'):
+                # Windows 10+: Use Snip & Sketch
+                from PIL import ImageGrab
+                
+                # Open Snip & Sketch
+                subprocess.Popen(["explorer", "ms-screenclip:"])
+                
+                # Wait for user to take screenshot
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showinfo(
+                    "Screenshot", 
+                    "Snip & Sketch is now open.\n\n"
+                    "1. Select your screen area\n"
+                    "2. The screenshot will be copied to clipboard\n"
+                    "3. Click OK below when ready to upload\n\n"
+                    "(Or click Cancel to abort)",
+                    parent=root
+                )
+                
+                # Grab image from clipboard
+                image = ImageGrab.grabclipboard()
+                root.destroy()
+                
+                if image is None:
+                    messagebox.showinfo("Info", "No screenshot found in clipboard - upload cancelled")
+                    if os.path.exists(tmpfile):
+                        os.remove(tmpfile)
+                    return
+                
+                # Save clipboard image to temp file
+                image.save(tmpfile, 'PNG')
+                
             else:
-                messagebox.showinfo("Info", "Screenshot cancelled or failed")
+                # Linux: Use gnome-screenshot
+                subprocess.run(["gnome-screenshot", "-a", "-f", tmpfile], check=True)
+                
+                # Wait for file to be written
+                for _ in range(50):  # 5 seconds max
+                    time.sleep(0.1)
+                    if os.path.exists(tmpfile) and os.path.getsize(tmpfile) > 0:
+                        break
+                else:
+                    messagebox.showinfo("Info", "Screenshot cancelled or failed")
+                    if os.path.exists(tmpfile):
+                        os.remove(tmpfile)
+                    return
+            
+            # Verify we have a valid screenshot file
+            if not os.path.exists(tmpfile) or os.path.getsize(tmpfile) == 0:
+                messagebox.showinfo("Info", "Screenshot file is empty or missing")
+                if os.path.exists(tmpfile):
+                    os.remove(tmpfile)
                 return
+            
+            # Save screenshot locally if configured
             filename = None
             if endpoint.get("KEEP_SCREENSHOTS") and endpoint.get("SCREENSHOT_FOLDER"):
                 folder = endpoint["SCREENSHOT_FOLDER"]
@@ -474,23 +524,40 @@ class KashStash:
                     dst.write(src.read())
             else:
                 filename = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            
+            # Get context and tags
             context = self.large_text_dialog("Screenshot Context")
             if not context:
                 messagebox.showinfo("Info", "Upload cancelled")
+                if os.path.exists(tmpfile):
+                    os.remove(tmpfile)
                 return
+            
             root = tk.Tk()
             root.withdraw()
             user_tags = simpledialog.askstring("Tags", "Enter tags (comma separated):") or ""
             root.destroy()
+            
             full_tags = self.build_tags(user_tags, endpoint, filename)
+            
+            # Upload the screenshot
             with open(tmpfile, "rb") as f:
                 file_data = f.read()
+            
             self.upload_file(filename, file_data, "image/png", full_tags, context, endpoint)
-        except subprocess.CalledProcessError:
-            messagebox.showerror("Error", "Screenshot tool failed. Install and Open gnome-screenshot.")
+            
+        except ImportError:
+            messagebox.showerror(
+                "Error", 
+                "PIL (Pillow) not installed!\n\n"
+                "Install with: pip install Pillow"
+            )
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Error", f"Screenshot tool failed: {e}")
         except Exception as e:
             messagebox.showerror("Error", f"Screenshot failed: {e}")
         finally:
+            # Clean up temp file
             if os.path.exists(tmpfile):
                 os.remove(tmpfile)
     
