@@ -15,9 +15,9 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox, filedialog
 from queue_boss import QueueBoss
 import threading
+import queue
 
 CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
-
 DEFAULT_PROBE_ID = "29"
 
 class KashStash:
@@ -26,6 +26,11 @@ class KashStash:
         self.cfg = self.load_config()
         # Migrate old configs if needed
         self.migrate_config()
+        
+        # Create command queue for GUI operations on macOS
+        if sys.platform == 'darwin' and not headless:
+            self.gui_queue = queue.Queue()
+        
         if not self.cfg.get("endpoints"):
             if self.headless:
                 print("ERROR: No endpoints configured. Run without --headless first to set up configuration.", file=sys.stderr)
@@ -638,41 +643,116 @@ class KashStash:
             t = threading.Thread(target=self._queue_boss.start, name="QueueBossAgent", daemon=True)
             t.start()
             print("[KashStash] Agent monitor started in background.")
+    
+    def process_gui_queue(self):
+        """Process GUI commands from the queue (macOS only)"""
+        if not hasattr(self, 'gui_queue'):
+            return
+            
+        try:
+            while True:
+                try:
+                    command = self.gui_queue.get_nowait()
+                    if command == 'config':
+                        self.manage_config()
+                    elif command == 'switch':
+                        self.switch_endpoint()
+                    elif command == 'quit':
+                        if hasattr(self, '_tk_root'):
+                            self._tk_root.quit()
+                        return False
+                except queue.Empty:
+                    break
+        except Exception as e:
+            print(f"[KashStash] GUI queue error: {e}")
+        
+        # Schedule next check
+        if hasattr(self, '_tk_root'):
+            self._tk_root.after(100, self.process_gui_queue)  # Check every 100ms
+        return True
 
 
 def create_tray_icon(app):
-    def on_screenshot(icon, item):
-        app.take_screenshot()
-    def on_note(icon, item):
-        app.quick_note()
-    def on_config(icon, item):
-        app.manage_config()
-    def on_switch(icon, item):
-        app.switch_endpoint()
-    def on_exit(icon, item):
-        icon.stop()
+    if sys.platform == 'darwin':
+        # macOS: Queue commands for config operations
+        def on_config(icon, item):
+            app.gui_queue.put('config')
+        def on_switch(icon, item):
+            app.gui_queue.put('switch')
+        def on_exit(icon, item):
+            app.gui_queue.put('quit')
+            icon.stop()
+    else:
+        # Windows/Linux: Direct calls
+        def on_screenshot(icon, item):
+            app.take_screenshot()
+        def on_note(icon, item):
+            app.quick_note()
+        def on_config(icon, item):
+            app.manage_config()
+        def on_switch(icon, item):
+            app.switch_endpoint()
+        def on_exit(icon, item):
+            icon.stop()
     
     image = Image.new('RGB', (64, 64), color='green')
     current_endpoint = app.get_current_endpoint()
     current_name = current_endpoint['name'] if current_endpoint else "None"
     
-    menu = pystray.Menu(
-        pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Take Screenshot", on_screenshot),
-        pystray.MenuItem("Quick Note", on_note),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Switch Endpoint", on_switch),
-        pystray.MenuItem("Manage Config", on_config),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Exit", on_exit)
-    )
+    # Build menu differently for macOS
+    if sys.platform == 'darwin':
+        # macOS: No screenshot or quick note
+        menu = pystray.Menu(
+            pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Switch Endpoint", on_switch),
+            pystray.MenuItem("Manage Config", on_config),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit", on_exit)
+        )
+    else:
+        # Windows/Linux: Full menu
+        menu = pystray.Menu(
+            pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Take Screenshot", on_screenshot),
+            pystray.MenuItem("Quick Note", on_note),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Switch Endpoint", on_switch),
+            pystray.MenuItem("Manage Config", on_config),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit", on_exit)
+        )
     
     icon = pystray.Icon("Kash Stash", image, "Kash Stash", menu)
+    return icon
+
+
+def run_with_tkinter_on_macos(app):
+    """Special runner for macOS that properly handles Tkinter + pystray"""
+    # Create hidden Tk root for GUI operations
+    app._tk_root = tk.Tk()
+    app._tk_root.withdraw()
+    
+    # Start processing GUI queue
+    app.process_gui_queue()
+    
+    # Create and start tray icon in separate thread
+    icon = create_tray_icon(app)
+    icon_thread = threading.Thread(target=icon.run, daemon=True)
+    icon_thread.start()
+    
+    # Run Tkinter main loop (this blocks and handles GUI events)
     try:
-        icon.run()
+        app._tk_root.mainloop()
     except KeyboardInterrupt:
         pass
+    finally:
+        if hasattr(app, '_tk_root'):
+            try:
+                app._tk_root.quit()
+            except:
+                pass
 
 
 if __name__ == "__main__":
@@ -696,6 +776,14 @@ if __name__ == "__main__":
             print("\n[KashStash] Shutting down...")
             sys.exit(0)
     else:
-        # GUI mode: start agent monitor in background, then create tray icon
+        # GUI mode
         app.start_agent_monitor()
-        create_tray_icon(app)
+        
+        if sys.platform == 'darwin':
+            # macOS: Special handling for Tkinter + pystray
+            print("[KashStash] Running on macOS with special event handling")
+            run_with_tkinter_on_macos(app)
+        else:
+            # Windows/Linux: Original approach works fine
+            icon = create_tray_icon(app)
+            icon.run()
