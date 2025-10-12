@@ -786,8 +786,12 @@ class QueueBoss:
         except Exception:
             post_content = "[Invalid base64 result]" if content_b64 else (result["stdout"] or "")
         res_tags.append(job_name)
-        self.post_digest(content=post_content, tags=",".join(res_tags))
-        print(f"[queue_boss] [{job_name}] Setup/Onetime {('success' if successful else 'fail')}, lockfile created and result posted.")
+        num_threads = int(job_conf.get('threads', 1))
+        timeout = int(job_conf.get("timeout", 900))
+        device_tag = self.get_current_endpoint().get("DEVICE")
+        lock_tag = job_conf.get("lock_tag", f"{job_name}-lock")
+        done_tags = parse_tags(job_conf.get("done_tags", f"{job_name}-done"))
+        fail_tags = parse_tags(job_conf.get("fail_tags", f"{job_name}-fail"))
 
     def schedule_task_job(self, job_name, job_conf):
         """Schedule a recurring job."""
@@ -815,12 +819,15 @@ class QueueBoss:
 
         def task_worker(thread_idx, random_start):
             time.sleep(random_start)
+            
             while True:
                 key = f"task-thread-{thread_idx}"
                 lock_id = key
-                # Only allow run if no lock or lock has expired
                 lock_path = queue_lockfile_name(job_name, lock_id)
+                
                 run_allowed = True
+                time_until_next = 0
+                
                 if os.path.exists(lock_path):
                     try:
                         with open(lock_path, 'r') as f:
@@ -828,10 +835,14 @@ class QueueBoss:
                         created = lock_data.get("created")
                         if created:
                             last_dt = datetime.fromisoformat(created)
-                            if (datetime.utcnow() - last_dt).total_seconds() < interval:
+                            elapsed = (datetime.utcnow() - last_dt).total_seconds()
+                            time_until_next = interval - elapsed
+                            
+                            if elapsed < interval:
                                 run_allowed = False
                     except Exception:
                         pass
+                
                 if run_allowed:
                     digest_id = job_conf.get("logic_digest_id")
                     script_content = self.fetch_logic_script(digest_id)
@@ -849,7 +860,7 @@ class QueueBoss:
                         time.sleep(5)
                         continue
                     
-                    # Tasks only need local lockfiles, not backend locks
+                    # Update lockfile with current time
                     create_queue_lockfile(job_name, lock_id)
                     
                     print(f"[queue_boss] [task] Running {job_name} (thread {thread_idx}) with {language}")
@@ -860,28 +871,43 @@ class QueueBoss:
                         output_obj = json.loads(result["stdout"])
                     except Exception:
                         output_obj = {}
+                    
                     successful = (result["retcode"] == 0) and output_obj.get("content")
+                    
                     if successful:
                         res_tags = done_tags.copy()
                     else:
                         res_tags = fail_tags.copy()
+                    
                     if "tags" in output_obj:
                         res_tags += parse_tags(output_obj["tags"])
+                    
                     content_b64 = output_obj.get("content", "")
                     try:
                         post_content = base64.b64decode(content_b64).decode("utf-8")
                     except Exception:
                         post_content = "[Invalid base64 result]" if content_b64 else (result["stdout"] or "")
+                    
                     res_tags.append(job_name)
                     self.post_digest(content=post_content, tags=",".join(res_tags))
-                    print(f"[queue_boss] [{job_name}] Task thread {thread_idx} {'success' if successful else 'fail'}, lockfile created and result posted.")
-
-                time.sleep(interval + random.uniform(1, 4))
+                    print(f"[queue_boss] [{job_name}] Task thread {thread_idx} {'success' if successful else 'fail'}, result posted.")
+                    
+                    # Sleep for the interval before next check
+                    time.sleep(interval + random.uniform(1, 4))
+                else:
+                    # Not time yet, sleep until it is
+                    sleep_time = max(1, time_until_next) + random.uniform(1, 4)
+                    time.sleep(sleep_time)
 
         # Spawn task threads with some random stagger
         for i in range(num_threads):
             stagger = random.uniform(2, 5) * i
-            t = threading.Thread(target=task_worker, args=(i, stagger), daemon=True)
+            t = threading.Thread(
+                target=task_worker, 
+                args=(i, stagger), 
+                daemon=True,
+                name=f"{job_name}-task-{i}"
+            )
             t.start()
 
     def _fetch_config_yaml(self):
