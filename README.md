@@ -12,6 +12,8 @@
 * building and running your own binary tends to get around performance issues better than trying to run a binary compiled on another machine
 * installation requires dev tools and brew/git/python
 
+## Compatibility
+* This binary can still be built/used for linux and windows, however, it may be less performant/have issues when compared to the main branch
 
 ## 🧩 Requirements
 
