@@ -20,7 +20,11 @@
 ### From Source
 
 ```bash
-pip install pillow pystray requests
+bash build.sh
+```
+
+```powershell
+./build.ps1
 ```
 
 ### Running the Binary
