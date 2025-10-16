@@ -5,7 +5,7 @@ a = Analysis(
     ['kash_stash.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('kash_stash_logo.png', '.')],
     hiddenimports=[
         'queue_boss',
         'bash_executor',
@@ -38,10 +38,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # <--- CHANGED TO TRUE SO YOU CAN SEE WTF IS HAPPENING
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    #icon='kash_stash_logo.png',   #optional - include your icon if you want an icon, icns for osx, ico for windows, png for linux (can also be used for .desktop files)
 )

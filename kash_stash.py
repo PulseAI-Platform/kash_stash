@@ -20,6 +20,12 @@ import queue
 CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
 DEFAULT_PROBE_ID = "29"
 
+def resource_path(filename):
+    # Ensures PyInstaller-bundled files are found at runtime
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.abspath(filename)
+
 class KashStash:
     def __init__(self, headless=False):
         self.headless = headless
@@ -674,7 +680,6 @@ class KashStash:
 
 def create_tray_icon(app):
     if sys.platform == 'darwin':
-        # macOS: Queue commands for config operations
         def on_config(icon, item):
             app.gui_queue.put('config')
         def on_switch(icon, item):
@@ -683,7 +688,6 @@ def create_tray_icon(app):
             app.gui_queue.put('quit')
             icon.stop()
     else:
-        # Windows/Linux: Direct calls
         def on_screenshot(icon, item):
             app.take_screenshot()
         def on_note(icon, item):
@@ -694,14 +698,17 @@ def create_tray_icon(app):
             app.switch_endpoint()
         def on_exit(icon, item):
             icon.stop()
-    
-    image = Image.new('RGB', (64, 64), color='green')
+
+    # --- Use PNG logo as tray icon
+    logo_path = resource_path('kash_stash_logo.png')
+    image = Image.open(logo_path)
+    image = image.resize(64, 64)
+
     current_endpoint = app.get_current_endpoint()
     current_name = current_endpoint['name'] if current_endpoint else "None"
-    
+
     # Build menu differently for macOS
     if sys.platform == 'darwin':
-        # macOS: No screenshot or quick note
         menu = pystray.Menu(
             pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -711,7 +718,6 @@ def create_tray_icon(app):
             pystray.MenuItem("Exit", on_exit)
         )
     else:
-        # Windows/Linux: Full menu
         menu = pystray.Menu(
             pystray.MenuItem(f"Current: {current_name}", None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -723,10 +729,9 @@ def create_tray_icon(app):
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", on_exit)
         )
-    
+
     icon = pystray.Icon("Kash Stash", image, "Kash Stash", menu)
     return icon
-
 
 def run_with_tkinter_on_macos(app):
     """Special runner for macOS that properly handles Tkinter + pystray"""
