@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:background="#0B0E14"
+    tools:context=".MainActivity">
+
+    <!-- Endpoint Switch Bar -->
+    <LinearLayout
+        android:id="@+id/endpoint_section"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#111827"
+        android:orientation="horizontal"
+        android:elevation="4dp"
+        android:padding="14dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/currentEndpointView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Endpoint: (none)"
+            android:textSize="19sp"
+            android:textColor="#e5e7eb"
+            android:fontFamily="sans-serif-medium" />
+
+        <Button
+            android:id="@+id/manageEndpointsButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Manage"
+            android:backgroundTint="#6936d8"
+            android:textColor="#fff"
+            android:fontFamily="sans-serif-medium"/>
+
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/mainActionsColumn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:layout_gravity="center"
+        android:layout_marginTop="44dp"
+        android:layout_marginBottom="24dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <Button
+            android:id="@+id/goToNodeButton"
+            android:layout_width="400dp"
+            android:layout_height="68dp"
+            android:layout_marginBottom="20dp"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:backgroundTint="#6936d8"
+            android:text="Go to My Node"
+            android:textColor="#fff"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:textSize="20sp"
+            android:drawableStart="@drawable/outline_3p_24"
+            android:drawablePadding="9dp"
+            android:elevation="1dp"
+            android:paddingLeft="18dp"
+            android:paddingRight="18dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"/>
+
+        <Button
+            android:id="@+id/blogButton"
+            android:layout_width="400dp"
+            android:layout_height="68dp"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:backgroundTint="#6936d8"
+            android:text="Pulse Blog"
+            android:textColor="#fff"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:textSize="20sp"
+            android:drawableStart="@drawable/outline_3p_24"
+            android:drawablePadding="9dp"
+            android:elevation="1dp"
+            android:paddingLeft="18dp"
+            android:paddingRight="18dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"/>
+    </LinearLayout>
+    <!-- Toolbar with dark corporate theme -->
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fitsSystemWindows="true"
+        android:layout_gravity="top">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="#111827"
+            app:titleTextColor="#e5e7eb"
+            android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- Standard Add Note FAB (right) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginBottom="18dp"
+        android:layout_marginEnd="17dp"
+        android:backgroundTint="#6936d8"
+        app:tint="#beabfb"
+        android:contentDescription="Quick Note"
+        app:tooltipText="Quick Note"
+        app:srcCompat="@drawable/outline_add_notes_24" />
+
+    <!-- Add Photo FAB (floats to left of add note) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_photo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginBottom="18dp"
+        android:layout_marginEnd="91dp"
+        android:backgroundTint="#6936d8"
+        app:tint="#beabfb"
+        android:contentDescription="Add Photo"
+        app:tooltipText="Add Photo"
+        app:srcCompat="@drawable/baseline_add_photo_alternate_24" />
+
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
