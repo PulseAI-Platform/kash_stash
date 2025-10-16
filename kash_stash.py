@@ -20,6 +20,12 @@ CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
 
 DEFAULT_PROBE_ID = "29"
 
+def resource_path(filename):
+    """Get the absolute path to a bundled resource"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.abspath(filename)
+
 class KashStash:
     def __init__(self, headless=False):
         self.headless = headless
@@ -652,7 +658,9 @@ def create_tray_icon(app):
     def on_exit(icon, item):
         icon.stop()
     
-    image = Image.new('RGB', (64, 64), color='green')
+    logo_path = resource_path('kash_stash_logo.png')
+    image = Image.open(logo_path)
+    image = image.resize((64, 64))
     current_endpoint = app.get_current_endpoint()
     current_name = current_endpoint['name'] if current_endpoint else "None"
     
