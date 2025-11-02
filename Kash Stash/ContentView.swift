@@ -1,7 +1,16 @@
 import SwiftUI
-
+#if os(macOS)
+extension View {
+    func fixedButtonStyle() -> some View {
+        self
+            .buttonStyle(PlainButtonStyle())
+            .contentShape(Rectangle())
+    }
+}
+#endif
 struct ContentView: View {
     @StateObject var viewModel = KashStashViewModel()
+    @State private var showQRImport = false
 
     var body: some View {
         NavigationView {
@@ -58,32 +67,96 @@ struct ContentView: View {
                     // 2. Main Menu – only if endpoints exist
                     if !viewModel.config.endpoints.isEmpty {
                         VStack(spacing: 24) {
-                            // Current endpoint info
-                            if let ep = viewModel.currentEndpoint {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Active Endpoint")
-                                        .font(.headline)
-                                        .foregroundColor(.secondary)
-                                    
-                                    Text(ep.name)
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.primary)
-                                    
-                                    if !ep.device.isEmpty {
-                                        Text("Device: \(ep.device)")
+                            // Current configuration status
+                            VStack(spacing: 12) {
+                                // Endpoint info
+                                if let ep = viewModel.currentEndpoint {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Image(systemName: "server.rack")
+                                                .foregroundColor(.green)
+                                            Text("Active Endpoint")
+                                                .font(.headline)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        Text(ep.name)
+                                            .font(.title2)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.primary)
+                                        
+                                        if !ep.device.isEmpty {
+                                            Text("Device: \(ep.device)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(12)
+                                } else {
+                                    HStack {
+                                        Image(systemName: "exclamationmark.circle")
+                                            .foregroundColor(.red)
+                                        Text("No endpoint selected")
+                                            .foregroundColor(.red)
+                                            .font(.headline)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(12)
+                                }
+                                
+                                // Kash Files info
+                                if let kf = viewModel.currentKashFiles {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Image(systemName: "icloud.fill")
+                                                .foregroundColor(.blue)
+                                            Text("Kash Files")
+                                                .font(.headline)
+                                                .foregroundColor(.secondary)
+                                            
+                                            Spacer()
+                                            
+                                            Text("ACTIVE")
+                                                .font(.caption)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.green)
+                                                .foregroundColor(.white)
+                                                .cornerRadius(4)
+                                        }
+                                        
+                                        Text(kf.name)
+                                            .font(.body)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        
+                                        Text(kf.url)
                                             .font(.caption)
                                             .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(12)
+                                }
+                                
+                                // Current upload destination indicator
+                                HStack {
+                                    Image(systemName: "arrow.up.circle")
+                                        .foregroundColor(.orange)
+                                    Text("Default Upload: \(viewModel.selectedUploadDestination.rawValue)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding()
-                                .background(Color(.systemGray6))
-                                .cornerRadius(12)
-                            } else {
-                                Text("No endpoint selected")
-                                    .foregroundColor(.red)
-                                    .font(.headline)
+                                .padding(.horizontal)
                             }
 
                             // Action buttons
@@ -127,12 +200,50 @@ struct ContentView: View {
                                     .cornerRadius(12)
                                 }
                                 .accessibilityHint("Take and upload a photo")
+                                
+                                NavigationLink(destination: FileUploadView(viewModel: viewModel)) {
+                                    HStack {
+                                        Image(systemName: "doc.badge.arrow.up")
+                                            .font(.title3)
+                                        Text("Upload File")
+                                            .font(.headline)
+                                            .fontWeight(.semibold)
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.vertical, 14)
+                                    .frame(maxWidth: .infinity)
+                                    .background(Color.black)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white, lineWidth: 2)
+                                    )
+                                    .cornerRadius(12)
+                                }
+                                .accessibilityHint("Select and upload a file")
                             }
                         }
                     }
 
                     // 3. Settings section
                     VStack(spacing: 16) {
+                        Button(action: {
+                            showQRImport = true
+                        }) {
+                            HStack {
+                                Image(systemName: "qrcode.viewfinder")
+                                    .font(.title3)
+                                Text("Import from QR")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                        }
+                        .accessibilityHint("Import configuration from QR code")
+                        
                         NavigationLink(destination: SwitchEndpointView(viewModel: viewModel)) {
                             HStack {
                                 Image(systemName: "arrow.triangle.swap")
@@ -152,6 +263,8 @@ struct ContentView: View {
                             .cornerRadius(10)
                         }
                         .accessibilityHint("Change active endpoint")
+                        .disabled(viewModel.config.endpoints.count < 2)
+                        .opacity(viewModel.config.endpoints.count < 2 ? 0.5 : 1.0)
                         
                         NavigationLink(destination: ManageEndpointsView(viewModel: viewModel)) {
                             HStack {
@@ -172,6 +285,34 @@ struct ContentView: View {
                             .cornerRadius(10)
                         }
                         .accessibilityHint("Add, edit, or remove endpoints")
+                        
+                        NavigationLink(destination: KashFilesManagementView(viewModel: viewModel)) {
+                            HStack {
+                                Image(systemName: "icloud")
+                                    .font(.title3)
+                                Text("Manage Kash Files")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                                
+                                if viewModel.currentKashFiles != nil {
+                                    Spacer()
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 8, height: 8)
+                                }
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.black)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 1.5)
+                            )
+                            .cornerRadius(10)
+                        }
+                        .accessibilityHint("Manage Kash Files cloud storage")
                     }
 
                     // 4. External link buttons
@@ -201,7 +342,31 @@ struct ContentView: View {
                         .accessibilityHint("Opens Pulse AI blog in browser")
                         
                         Button(action: {
-                            if let nodeName = viewModel.config.endpoints.first?.nodeName,
+                            if let url = URL(string: "https://pulseaiplatform.com") {
+                                UIApplication.shared.open(url)
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "sparkles")
+                                    .font(.title3)
+                                Text("Go to Portal")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.black)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 1.5)
+                            )
+                            .cornerRadius(10)
+                        }
+                        .accessibilityHint("Opens Pulse AI Platform portal in browser")
+                        
+                        Button(action: {
+                            if let nodeName = viewModel.currentEndpoint?.nodeName,
                                !nodeName.isEmpty,
                                let url = URL(string: "https://pulse-\(nodeName).xyzpulseinfra.com") {
                                 UIApplication.shared.open(url)
@@ -238,9 +403,12 @@ struct ContentView: View {
             .background(Color(.systemGroupedBackground).edgesIgnoringSafeArea(.all))
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .sheet(isPresented: $showQRImport) {
+            QRImportView(viewModel: viewModel)
+        }
     }
     
     private var isMyNodeDisabled: Bool {
-        viewModel.config.endpoints.first?.nodeName.isEmpty ?? true
+        viewModel.currentEndpoint?.nodeName.isEmpty ?? true
     }
 }

@@ -8,10 +8,9 @@ struct KashStashEndpoint: Codable, Identifiable, Equatable {
     var nodeName: String
     var probeId: String
     var keepScreenshots: Bool
-}
-
-// THIS IS WHAT YOU'RE MISSING:
-struct AppConfig: Codable, Equatable {
-    var endpoints: [KashStashEndpoint]
-    var lastUsedEndpoint: UUID?
+    
+    // NEW FIELDS for config digest support
+    var configDigestId: String?
+    var configDigestTags: String = "agent-config"
+    var configCacheMinutes: Int = 5
 }
