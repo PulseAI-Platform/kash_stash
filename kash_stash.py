@@ -177,13 +177,19 @@ class KashStash:
         endpoint = self.get_current_endpoint()
         if not endpoint:
             if not self.headless:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "No endpoint configured!")
+                root.destroy()
             return
         
         node_name = endpoint.get('NODE_NAME', '')
         if not node_name:
             if not self.headless:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "Endpoint has no NODE_NAME configured!")
+                root.destroy()
             return
         
         url = f"https://pulse-{node_name}.xyzpulseinfra.com"
@@ -1754,22 +1760,49 @@ class KashStash:
 
 
 def create_tray_icon(app):
+    # Windows fix: Run GUI operations in separate threads to avoid blocking
     def on_screenshot(icon, item):
-        app.take_screenshot()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.take_screenshot, daemon=True).start()
+        else:
+            app.take_screenshot()
+    
     def on_note(icon, item):
-        app.quick_note()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.quick_note, daemon=True).start()
+        else:
+            app.quick_note()
+    
     def on_upload_file(icon, item):
-        app.upload_file_with_note()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.upload_file_with_note, daemon=True).start()
+        else:
+            app.upload_file_with_note()
+    
     def on_config(icon, item):
-        app.manage_config()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.manage_config, daemon=True).start()
+        else:
+            app.manage_config()
+    
     def on_switch(icon, item):
-        app.switch_endpoint()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.switch_endpoint, daemon=True).start()
+        else:
+            app.switch_endpoint()
+    
     def on_node_portal(icon, item):
-        app.open_node_portal()
+        if sys.platform.startswith('win'):
+            threading.Thread(target=app.open_node_portal, daemon=True).start()
+        else:
+            app.open_node_portal()
+    
     def on_blog(icon, item):
-        app.open_blog()
+        app.open_blog()  # This just opens browser, no GUI needed
+    
     def on_portal(icon, item):
-        app.open_portal()
+        app.open_portal()  # This just opens browser, no GUI needed
+    
     def on_exit(icon, item):
         icon.stop()
     
