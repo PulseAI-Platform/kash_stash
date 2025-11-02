@@ -13,7 +13,7 @@ from datetime import datetime
 from PIL import Image
 import pystray
 import tkinter as tk
-from tkinter import simpledialog, messagebox, filedialog, ttk
+from tkinter import simpledialog, messagebox, filedialog
 from queue_boss import QueueBoss
 import threading
 from kash_files import KashFilesClient
@@ -29,233 +29,43 @@ def resource_path(filename):
         return os.path.join(sys._MEIPASS, filename)
     return os.path.abspath(filename)
 
-class TagSelectorDialog:
-    """Custom dialog for selecting tags with history"""
-    def __init__(self, parent, recent_tags):
+class SimpleTagDialog:
+    """Simplified tag dialog that doesn't cause Windows lockups"""
+    def __init__(self, recent_tags):
         self.result = None
         self.recent_tags = recent_tags
         
-        # Create dialog window
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Select Tags")
-        self.dialog.geometry("600x500")
+    def show(self):
+        """Show a simplified tag selection dialog"""
+        root = tk.Tk()
+        root.withdraw()
         
-        # Search frame
-        search_frame = tk.Frame(self.dialog)
-        search_frame.pack(fill="x", padx=10, pady=5)
+        # Build options text
+        options_text = "Recent tag combinations:\n\n"
+        for i, entry in enumerate(self.recent_tags[:10]):  # Show last 10
+            tags = entry['value']
+            if len(tags) > 60:
+                tags = tags[:57] + "..."
+            options_text += f"{i+1}: {tags}\n"
         
-        tk.Label(search_frame, text="Filter:").pack(side="left", padx=(0, 5))
-        self.search_var = tk.StringVar()
-        self.search_var.trace("w", self.filter_tags)
-        self.search_entry = tk.Entry(search_frame, textvariable=self.search_var)
-        self.search_entry.pack(side="left", fill="x", expand=True)
+        options_text += "\nEnter number (1-10) to use recent tags,\nor enter new tags (comma-separated):"
         
-        # Recent tags list
-        list_frame = tk.Frame(self.dialog)
-        list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        result = simpledialog.askstring("Select Tags", options_text)
         
-        tk.Label(list_frame, text="Recent tag combinations (double-click to use):").pack(anchor="w")
+        if result:
+            # Check if it's a number selection
+            try:
+                idx = int(result) - 1
+                if 0 <= idx < len(self.recent_tags) and idx < 10:
+                    self.result = self.recent_tags[idx]['value']
+                else:
+                    self.result = result
+            except ValueError:
+                # Not a number, treat as new tags
+                self.result = result
         
-        # Listbox with scrollbar
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side="right", fill="y")
-        
-        self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
-        self.listbox.pack(fill="both", expand=True)
-        scrollbar.config(command=self.listbox.yview)
-        
-        # Initialize tag_values list
-        self.tag_values = []
-        
-        # Populate listbox
-        self.populate_list()
-        
-        # Bind double-click
-        self.listbox.bind("<Double-Button-1>", self.on_select)
-        
-        # Manual entry frame
-        entry_frame = tk.Frame(self.dialog)
-        entry_frame.pack(fill="x", padx=10, pady=5)
-        
-        tk.Label(entry_frame, text="Enter tags (comma-separated):").pack(anchor="w")
-        
-        # Entry with Add button on same line
-        entry_line_frame = tk.Frame(entry_frame)
-        entry_line_frame.pack(fill="x", pady=2)
-        
-        self.tags_entry = tk.Entry(entry_line_frame)
-        self.tags_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.tags_entry.focus_set()
-        
-        # Add tags button next to entry
-        tk.Button(entry_line_frame, text="Add to History", command=self.add_tags_to_history, width=15).pack(side="left")
-        
-        # Bind Enter key to add tags
-        self.tags_entry.bind("<Return>", lambda e: self.add_tags_to_history())
-        
-        # Main buttons frame
-        button_frame = tk.Frame(self.dialog)
-        button_frame.pack(pady=10)
-        
-        tk.Button(button_frame, text="Use Selected", command=self.use_selected, width=15).pack(side="left", padx=5)
-        tk.Button(button_frame, text="Use Entry", command=self.use_manual, width=15).pack(side="left", padx=5)
-        tk.Button(button_frame, text="Cancel", command=self.cancel, width=15).pack(side="left", padx=5)
-        
-        # Management buttons frame
-        mgmt_frame = tk.Frame(self.dialog)
-        mgmt_frame.pack(pady=5)
-        
-        tk.Button(mgmt_frame, text="Delete Selected", command=self.delete_selected, width=15).pack(side="left", padx=5)
-        tk.Button(mgmt_frame, text="Clear All History", command=self.clear_history, width=15).pack(side="left", padx=5)
-        
-        # Status label
-        self.status_label = tk.Label(self.dialog, text="", fg="green")
-        self.status_label.pack(pady=2)
-        
-        # Make dialog modal
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
-        parent.wait_window(self.dialog)
-    
-    def add_tags_to_history(self):
-        """Add tags from entry field to history without using them"""
-        tags = self.tags_entry.get().strip()
-        if not tags:
-            self.show_status("Please enter tags to add", error=True)
-            return
-        
-        # Add to recent_tags with current timestamp
-        from datetime import datetime
-        timestamp = datetime.now().isoformat()
-        
-        # Check if this tag combination already exists
-        found = False
-        for entry in self.recent_tags:
-            if entry['value'] == tags:
-                entry['lastused'] = timestamp
-                found = True
-                self.show_status(f"Updated existing tags: {tags[:50]}...")
-                break
-        
-        if not found:
-            # Add new entry at the beginning
-            self.recent_tags.insert(0, {
-                'value': tags,
-                'lastused': timestamp
-            })
-            self.show_status(f"Added to history: {tags[:50]}...")
-        
-        # Sort by lastused (most recent first)
-        self.recent_tags.sort(key=lambda x: x.get('lastused', ''), reverse=True)
-        
-        # Limit to 50 entries
-        while len(self.recent_tags) > 50:
-            self.recent_tags.pop()
-        
-        # Clear the entry
-        self.tags_entry.delete(0, tk.END)
-        
-        # Refresh the display
-        self.populate_list(self.search_var.get())
-        
-        # Select the newly added item
-        if not found:
-            self.listbox.selection_set(0)
-            self.listbox.see(0)
-    
-    def delete_selected(self):
-        """Delete the selected tag combination from history"""
-        selection = self.listbox.curselection()
-        if not selection:
-            self.show_status("No item selected to delete", error=True)
-            return
-        
-        idx = selection[0]
-        if idx < len(self.tag_values):
-            tags_to_delete = self.tag_values[idx]
-            
-            # Find and remove from recent_tags
-            self.recent_tags[:] = [entry for entry in self.recent_tags if entry['value'] != tags_to_delete]
-            
-            # Refresh display
-            self.populate_list(self.search_var.get())
-            self.show_status(f"Deleted: {tags_to_delete[:50]}...")
-    
-    def show_status(self, message, error=False):
-        """Show a status message"""
-        self.status_label.config(text=message, fg="red" if error else "green")
-        # Clear status after 3 seconds
-        self.dialog.after(3000, lambda: self.status_label.config(text=""))
-    
-    def populate_list(self, filter_text=""):
-        """Populate the listbox with recent tags"""
-        self.listbox.delete(0, tk.END)
-        self.tag_values = []
-        
-        for tag_entry in self.recent_tags:
-            tags = tag_entry['value']
-            lastused = tag_entry.get('lastused', 'Unknown')
-            
-            # Format display
-            if isinstance(lastused, str) and lastused != 'Unknown':
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(lastused)
-                    time_str = dt.strftime("%Y-%m-%d %H:%M")
-                except:
-                    time_str = lastused
-            else:
-                time_str = "Unknown"
-            
-            # Apply filter
-            if not filter_text or filter_text.lower() in tags.lower():
-                # Truncate long tag lists for display
-                display_tags = tags if len(tags) <= 60 else tags[:57] + "..."
-                display = f"{display_tags} (used: {time_str})"
-                self.listbox.insert(tk.END, display)
-                self.tag_values.append(tags)
-    
-    def filter_tags(self, *args):
-        """Filter the tag list based on search text"""
-        filter_text = self.search_var.get()
-        self.populate_list(filter_text)
-    
-    def on_select(self, event):
-        """Handle double-click on list item"""
-        self.use_selected()
-    
-    def use_selected(self):
-        """Use the selected tag combination"""
-        selection = self.listbox.curselection()
-        if selection:
-            idx = selection[0]
-            if idx < len(self.tag_values):
-                self.result = self.tag_values[idx]
-                self.dialog.destroy()
-        else:
-            self.show_status("Please select a tag combination", error=True)
-    
-    def use_manual(self):
-        """Use manually entered tags"""
-        self.result = self.tags_entry.get().strip()
-        if self.result:
-            self.dialog.destroy()
-        else:
-            self.show_status("Please enter tags or select from history", error=True)
-    
-    def cancel(self):
-        """Cancel without selecting"""
-        self.result = None
-        self.dialog.destroy()
-    
-    def clear_history(self):
-        """Clear tag history"""
-        from tkinter import messagebox
-        if messagebox.askyesno("Clear History", "Clear all tag history?", parent=self.dialog):
-            self.recent_tags.clear()
-            self.tag_values = []
-            self.populate_list()
-            self.show_status("History cleared")
+        root.destroy()
+        return self.result
 
 class KashStash:
     def __init__(self, headless=False):
@@ -349,45 +159,16 @@ class KashStash:
         self.save_config()
     
     def select_tags_dialog(self):
-        """Show tag selector dialog with history"""
-        try:
-            root = tk.Tk()
-            root.title("Loading...")
-            root.geometry("200x50")
-            root.resizable(False, False)
-            
-            label = tk.Label(root, text="Opening tag selector...")
-            label.pack(pady=10)
-            root.update()
-            
-            # Pass the recent_tags list directly (it will be modified in place)
-            recent_tags = self.cfg.get('recent_tags', [])
-            dialog = TagSelectorDialog(root, recent_tags)
-            result = dialog.result
-            
-            # Save config in case tags were added/deleted in the dialog
-            self.cfg['recent_tags'] = recent_tags[:50]  # Ensure max 50 entries
-            self.save_config()
-            
-            root.destroy()
-            return result if result else ""
-            
-        except Exception as e:
-            print(f"Tag selector dialog failed: {e}")
-            # Fallback to simple dialog
-            root = tk.Tk()
-            root.withdraw()
-            tags = simpledialog.askstring("Tags", "Enter tags (comma separated):") or ""
-            root.destroy()
-            return tags
+        """Show simplified tag selector dialog"""
+        dialog = SimpleTagDialog(self.cfg.get('recent_tags', []))
+        result = dialog.show()
+        return result if result else ""
     
     def update_kash_files_clients(self):
         """Update the list of Kash Files client instances"""
         self.kash_files_clients = []
         for kf_config in self.cfg.get("kashFiles", []):
-            # Fix the API endpoint
             client = KashFilesClient(kf_config)
-            # Update the upload endpoint
             client.upload_endpoint = "/api/files/upload"
             self.kash_files_clients.append(client)
     
@@ -409,7 +190,10 @@ class KashStash:
         webbrowser.open(url)
         
         if not self.headless:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Browser", f"Opening: {url}")
+            root.destroy()
     
     def open_blog(self):
         """Open the Pulse AI blog"""
@@ -427,7 +211,10 @@ class KashStash:
         kash_files = self.get_current_kash_files()
         if not kash_files:
             if not self.headless:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "No Kash Files instance configured!\nPlease configure one in Manage Config.")
+                root.destroy()
             return
         
         # Select file
@@ -459,18 +246,13 @@ class KashStash:
                 content_type = 'application/octet-stream'
             
         except Exception as e:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", f"Failed to read file: {e}")
+            root.destroy()
             return
         
         # Upload to Kash Files first
-        idx = self.cfg.get("last_used_kash_files", 0)
-        if idx >= len(self.kash_files_clients):
-            messagebox.showerror("Error", "Invalid Kash Files instance index")
-            return
-        
-        client = self.kash_files_clients[idx]
-        
-        # Do the upload
         try:
             # Make the request directly since we need the raw response
             endpoint = f"{kash_files['url']}/api/files/upload"
@@ -489,23 +271,35 @@ class KashStash:
             
             # Check if upload was successful
             if not result.get('ok'):
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "File upload failed")
+                root.destroy()
                 return
             
             # Extract the download URL
             download_path = result.get('download', '')
             if not download_path:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "No download URL in response")
+                root.destroy()
                 return
             
             # Construct full URL
             file_url = f"{kash_files['url']}{download_path}"
             
             # Show success
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Upload Success", f"File uploaded successfully!\n\nURL: {file_url}")
+            root.destroy()
             
         except Exception as e:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", f"Upload failed: {e}")
+            root.destroy()
             return
         
         # Now create a note with the link
@@ -514,7 +308,10 @@ class KashStash:
         # Get additional context
         context = self.large_text_dialog("Add File Description", note_text)
         if not context:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Info", "Note cancelled - file was still uploaded")
+            root.destroy()
             return
         
         # Get tags
@@ -535,7 +332,10 @@ class KashStash:
             # Upload the note to the endpoint
             self.upload_file(note_filename, note_data, "text/plain", full_tags, context, endpoint)
         else:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showwarning("Warning", "No endpoint configured for note upload")
+            root.destroy()
     
     def setup_initial_config(self):
         root = tk.Tk()
@@ -559,10 +359,13 @@ class KashStash:
             self.import_qr_config()
             # After import, check if we have endpoints
             if not self.cfg.get("endpoints"):
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showinfo(
                     "Setup Incomplete",
                     "No endpoint was imported. Please set up an endpoint manually."
                 )
+                root.destroy()
                 self.setup_initial_config_manual()
         else:  # No - manual setup
             root.destroy()
@@ -845,7 +648,10 @@ class KashStash:
         """Update current endpoint with pod configuration from QR"""
         endpoint = self.get_current_endpoint()
         if not endpoint:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", "No current endpoint to update!")
+            root.destroy()
             return
         
         # Extract pod settings
@@ -858,11 +664,14 @@ class KashStash:
         # Save
         self.save_config()
         
+        root = tk.Tk()
+        root.withdraw()
         messagebox.showinfo(
             "Success",
             f"Updated endpoint '{endpoint['name']}' with pod configuration:\n"
             f"Pod URL: {pod_settings['POD_URL']}"
         )
+        root.destroy()
     
     def add_pod_to_endpoint(self):
         """Add or update pod configuration for an endpoint via QR scan"""
@@ -996,7 +805,10 @@ class KashStash:
             
             # Validate it has the expected structure
             if 'endpoints' not in new_config:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "Invalid config: missing 'endpoints' array")
+                root.destroy()
                 return
             
             # Ask what to do
@@ -1041,9 +853,15 @@ class KashStash:
             root.destroy()
             
         except json.JSONDecodeError as e:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", f"Invalid JSON: {e}")
+            root.destroy()
         except Exception as e:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", f"Import failed: {e}")
+            root.destroy()
     
     def manage_config(self):
         """Updated config management with new options"""
@@ -1094,9 +912,9 @@ class KashStash:
             choice = choice.lower().strip()
             
             if choice == 'q':
-                self.import_qr_config()  # General import - detects type
+                self.import_qr_config()
             elif choice == 'w':
-                self.import_kash_files_qr()  # Specific Kash Files import
+                self.import_kash_files_qr()
             elif choice == 'p':
                 self.add_pod_to_endpoint()
             elif choice == 'r':
@@ -1253,7 +1071,10 @@ class KashStash:
     def edit_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
         if not endpoints:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Edit", "No endpoints to edit")
+            root.destroy()
             return
         
         root = tk.Tk()
@@ -1346,7 +1167,10 @@ class KashStash:
     def delete_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
         if not endpoints:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Delete", "No endpoints to delete")
+            root.destroy()
             return
         
         root = tk.Tk()
@@ -1375,7 +1199,10 @@ class KashStash:
     def switch_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
         if not endpoints:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Switch", "No endpoints configured")
+            root.destroy()
             return
         
         root = tk.Tk()
@@ -1407,7 +1234,10 @@ class KashStash:
         """Switch current Kash Files instance"""
         kash_files = self.cfg.get("kashFiles", [])
         if not kash_files:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Switch", "No Kash Files instances configured")
+            root.destroy()
             return
         
         root = tk.Tk()
@@ -1477,7 +1307,10 @@ class KashStash:
     def take_screenshot(self):
         endpoint = self.get_current_endpoint()
         if not endpoint:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", "No endpoint configured!")
+            root.destroy()
             return
         
         fd, tmpfile = tempfile.mkstemp(suffix=".png")
@@ -1485,10 +1318,13 @@ class KashStash:
         
         try:
             if sys.platform.startswith('win'):
-                # Windows code stays the same...
+                # Windows 10+: Use Snip & Sketch
                 from PIL import ImageGrab
+                
+                # Open Snip & Sketch
                 subprocess.Popen(["explorer", "ms-screenclip:"])
                 
+                # Wait for user to take screenshot
                 root = tk.Tk()
                 root.withdraw()
                 messagebox.showinfo(
@@ -1506,15 +1342,19 @@ class KashStash:
                 root.destroy()
                 
                 if image is None:
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showinfo("Info", "No screenshot found in clipboard - upload cancelled")
+                    root.destroy()
                     if os.path.exists(tmpfile):
                         os.remove(tmpfile)
                     return
                 
+                # Save clipboard image to temp file
                 image.save(tmpfile, 'PNG')
                 
             else:
-                # Linux: Use gnome-screenshot with better error handling
+                # Linux: Use gnome-screenshot
                 print(f"[Screenshot] Using temp file: {tmpfile}")
                 
                 # Run gnome-screenshot and wait for it to complete
@@ -1533,7 +1373,10 @@ class KashStash:
                     print(f"[Screenshot] User cancelled or error occurred")
                     if os.path.exists(tmpfile):
                         os.remove(tmpfile)
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showinfo("Info", "Screenshot cancelled")
+                    root.destroy()
                     return
                 
                 # Wait for file to be written with better checking
@@ -1559,35 +1402,22 @@ class KashStash:
                 
                 if not file_ready:
                     print(f"[Screenshot] Timeout waiting for file")
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showerror("Error", "Screenshot file was not created properly.\nPlease try again.")
+                    root.destroy()
                     if os.path.exists(tmpfile):
                         os.remove(tmpfile)
                     return
             
             # Verify we have a valid screenshot file
-            if not os.path.exists(tmpfile):
-                print(f"[Screenshot] File doesn't exist after waiting")
-                messagebox.showerror("Error", "Screenshot file was not created")
-                return
-            
-            final_size = os.path.getsize(tmpfile)
-            print(f"[Screenshot] Final file size: {final_size} bytes")
-            
-            if final_size == 0:
-                print(f"[Screenshot] File is empty")
-                messagebox.showerror("Error", "Screenshot file is empty")
-                os.remove(tmpfile)
-                return
-            
-            # Try to validate it's actually an image
-            try:
-                from PIL import Image
-                with Image.open(tmpfile) as img:
-                    print(f"[Screenshot] Valid image: {img.size[0]}x{img.size[1]} pixels")
-            except Exception as e:
-                print(f"[Screenshot] Invalid image file: {e}")
-                messagebox.showerror("Error", f"Screenshot file is not a valid image: {e}")
-                os.remove(tmpfile)
+            if not os.path.exists(tmpfile) or os.path.getsize(tmpfile) == 0:
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showinfo("Info", "Screenshot file is empty or missing")
+                root.destroy()
+                if os.path.exists(tmpfile):
+                    os.remove(tmpfile)
                 return
             
             # Save screenshot locally if configured
@@ -1606,7 +1436,10 @@ class KashStash:
             # Get context and tags
             context = self.large_text_dialog("Screenshot Context")
             if not context:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showinfo("Info", "Upload cancelled")
+                root.destroy()
                 if os.path.exists(tmpfile):
                     os.remove(tmpfile)
                 return
@@ -1628,31 +1461,37 @@ class KashStash:
             # Ask where to upload
             self.upload_with_choice(filename, file_data, "image/png", full_tags, context)
             
-        except subprocess.CalledProcessError as e:
-            print(f"[Screenshot] subprocess error: {e}")
-            messagebox.showerror("Error", f"Screenshot tool failed: {e}")
-        except ImportError as e:
-            print(f"[Screenshot] Import error: {e}")
+        except ImportError:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror(
                 "Error", 
                 "PIL (Pillow) not installed!\n\n"
                 "Install with: pip install Pillow"
             )
+            root.destroy()
+        except subprocess.CalledProcessError as e:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Error", f"Screenshot tool failed: {e}")
+            root.destroy()
         except Exception as e:
-            print(f"[Screenshot] Unexpected error: {e}")
-            import traceback
-            traceback.print_exc()
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", f"Screenshot failed: {e}")
+            root.destroy()
         finally:
             # Clean up temp file
             if os.path.exists(tmpfile):
-                print(f"[Screenshot] Cleaning up temp file")
                 os.remove(tmpfile)
-                
+    
     def quick_note(self):
         note_text = self.large_text_dialog("Quick Note")
         if not note_text:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Info", "Note cancelled")
+            root.destroy()
             return
         
         user_tags = self.select_tags_dialog()
@@ -1679,7 +1518,10 @@ class KashStash:
         kash_files = self.get_current_kash_files()
         
         if not endpoint and not kash_files:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showerror("Error", "No endpoint or Kash Files configured!")
+            root.destroy()
             return
         
         root = tk.Tk()
@@ -1785,24 +1627,36 @@ class KashStash:
                 if self.headless:
                     print(f"[KashStash] Upload to endpoint completed! Tags: {tags}")
                 else:
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showinfo("Success", f"Upload to endpoint completed!\nTags: {tags}")
+                    root.destroy()
             else:
                 if self.headless:
                     print(f"[KashStash] Upload to endpoint failed: {response.status_code}")
                 else:
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showerror("Error", f"Upload to endpoint failed: {response.status_code}")
+                    root.destroy()
         except Exception as e:
             if self.headless:
                 print(f"[KashStash] Upload to endpoint error: {e}")
             else:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", f"Upload to endpoint error: {e}")
+                root.destroy()
     
     def upload_to_kash_files_with_result(self, filename, file_data, content_type, tags, description):
         """Upload file to Kash Files instance and return the URL"""
         kash_files = self.get_current_kash_files()
         if not kash_files:
             if not self.headless:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", "No Kash Files instance configured!")
+                root.destroy()
             return None
         
         try:
@@ -1828,14 +1682,20 @@ class KashStash:
             # Check if upload was successful
             if not result.get('ok'):
                 if not self.headless:
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showerror("Error", "Kash Files upload failed")
+                    root.destroy()
                 return None
             
             # Extract the download URL
             download_path = result.get('download', '')
             if not download_path:
                 if not self.headless:
+                    root = tk.Tk()
+                    root.withdraw()
                     messagebox.showerror("Error", "No download URL in response")
+                    root.destroy()
                 return None
             
             # Construct full URL
@@ -1852,14 +1712,20 @@ class KashStash:
             if self.headless:
                 print(f"[KashStash] Upload to Kash Files failed: {e}")
             else:
+                root = tk.Tk()
+                root.withdraw()
                 messagebox.showerror("Error", f"Upload to Kash Files failed: {e}")
+                root.destroy()
             return None
 
     def upload_to_kash_files(self, filename, file_data, content_type, tags, description):
         """Upload file to Kash Files instance (original method for backward compatibility)"""
         result = self.upload_to_kash_files_with_result(filename, file_data, content_type, tags, description)
         if result and not self.headless:
+            root = tk.Tk()
+            root.withdraw()
             messagebox.showinfo("Success", f"Upload to Kash Files completed!\nURL: {result}")
+            root.destroy()
     
     def start_agent_monitor(self):
         """Starts the agent monitoring/queue boss."""
