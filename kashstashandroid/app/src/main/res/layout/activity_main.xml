@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MainActivity layout with white-on-black theme -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -10,34 +9,74 @@
     android:background="#000000"
     tools:context=".MainActivity">
 
+    <!-- Endpoints and Kash Files Section -->
     <LinearLayout
-        android:id="@+id/endpoint_section"
+        android:id="@+id/instances_section"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="#111314"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:elevation="4dp"
-        android:padding="14dp"
-        android:gravity="center_vertical">
+        android:paddingTop="60dp"> <!-- Account for toolbar -->
 
-        <TextView
-            android:id="@+id/currentEndpointView"
-            android:layout_width="0dp"
+        <!-- Endpoint Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Endpoint: (none)"
-            android:textSize="19sp"
-            android:textColor="#FFFFFF"
-            android:fontFamily="sans-serif-medium" />
+            android:orientation="horizontal"
+            android:padding="14dp"
+            android:gravity="center_vertical">
 
-        <Button
-            android:id="@+id/manageEndpointsButton"
-            android:layout_width="wrap_content"
+            <TextView
+                android:id="@+id/currentEndpointView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Endpoint: (none)"
+                android:textSize="17sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="sans-serif-medium" />
+
+            <Button
+                android:id="@+id/manageEndpointsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Manage"
+                android:backgroundTint="#222227"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"/>
+        </LinearLayout>
+
+        <!-- Kash Files Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Manage"
-            android:backgroundTint="#222227"
-            android:textColor="#FFFFFF"
-            android:fontFamily="sans-serif-medium"/>
+            android:orientation="horizontal"
+            android:padding="14dp"
+            android:paddingTop="0dp"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/currentKashFilesView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Kash Files: (none)"
+                android:textSize="17sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="sans-serif-medium" />
+
+            <Button
+                android:id="@+id/manageKashFilesButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Manage"
+                android:backgroundTint="#222227"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"/>
+        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
@@ -52,14 +91,32 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp">
 
+        <!-- NEW BUTTON - Go to Portal -->
+        <Button
+            android:id="@+id/portalButton"
+            android:layout_width="400dp"
+            android:layout_height="68dp"
+            android:layout_marginBottom="20dp"
+            android:backgroundTint="#222227"
+            android:text="Go to Portal"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:textSize="20sp"
+            android:drawableStart="@drawable/outline_3p_24"
+            android:drawablePadding="9dp"
+            android:elevation="1dp"
+            android:paddingLeft="18dp"
+            android:paddingRight="18dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"/>
+
+
         <Button
             android:id="@+id/goToNodeButton"
             android:layout_width="400dp"
             android:layout_height="68dp"
             android:layout_marginBottom="20dp"
-            android:layout_weight="1"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
             android:backgroundTint="#222227"
             android:text="Go to My Node"
             android:textColor="#FFFFFF"
@@ -78,9 +135,7 @@
             android:id="@+id/blogButton"
             android:layout_width="400dp"
             android:layout_height="68dp"
-            android:layout_weight="1"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
+            android:layout_marginBottom="20dp"
             android:backgroundTint="#222227"
             android:text="Pulse Blog"
             android:textColor="#FFFFFF"
@@ -94,6 +149,23 @@
             android:paddingRight="18dp"
             android:paddingTop="4dp"
             android:paddingBottom="4dp"/>
+
+        <Button
+            android:id="@+id/importQrButton"
+            android:layout_width="400dp"
+            android:layout_height="68dp"
+            android:backgroundTint="#222227"
+            android:text="Import from QR"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:textSize="20sp"
+            android:elevation="1dp"
+            android:paddingLeft="18dp"
+            android:paddingRight="18dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"/>
+
     </LinearLayout>
 
     <com.google.android.material.appbar.AppBarLayout

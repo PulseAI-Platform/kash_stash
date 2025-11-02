@@ -1,0 +1,1 @@
+This app is Apache 2.0, but that applies only to this app.

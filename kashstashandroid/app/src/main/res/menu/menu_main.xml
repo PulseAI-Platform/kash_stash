@@ -2,9 +2,28 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     tools:context="com.pulseai.kashstash.MainActivity">
+
+    <item
+        android:id="@+id/action_import_qr"
+        android:title="Import from QR"
+        android:orderInCategory="50"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_manage_endpoints"
+        android:title="Manage Endpoints"
+        android:orderInCategory="100"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_manage_kash_files"
+        android:title="Manage Kash Files"
+        android:orderInCategory="150"
+        app:showAsAction="never" />
+
     <item
         android:id="@+id/action_settings"
-        android:orderInCategory="100"
+        android:orderInCategory="200"
         android:title="@string/action_settings"
         app:showAsAction="never" />
 </menu>

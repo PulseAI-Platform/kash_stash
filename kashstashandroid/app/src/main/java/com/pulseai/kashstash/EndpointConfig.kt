@@ -5,5 +5,9 @@ data class EndpointConfig(
     val device: String,
     val probeKey: String,
     val nodeName: String,
-    val probeId: String
+    val probeId: String,
+    // NEW FIELDS:
+    val configDigestId: String = "",
+    val configDigestTags: String = "agent-config",
+    val configCacheMinutes: Int = 5
 )
