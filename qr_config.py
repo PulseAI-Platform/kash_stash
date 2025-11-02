@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 """
-QR code configuration importer
+QR code configuration importer with fallback for Windows
 """
 import json
 import base64
 from PIL import Image
-from pyzbar import pyzbar
 import io
 from typing import Optional, Dict, Any
+
+# Try to import pyzbar, but make it optional
+try:
+    from pyzbar import pyzbar
+    PYZBAR_AVAILABLE = True
+except ImportError:
+    PYZBAR_AVAILABLE = False
+    print("[QRConfig] pyzbar not available - QR code reading disabled")
+
+# Try qrcode as a fallback for reading (it can generate but not read)
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 class QRConfigImporter:
     @staticmethod
@@ -21,27 +35,46 @@ class QRConfigImporter:
         Returns:
             Decoded JSON config or None if failed
         """
-        try:
-            # Open image
-            image = Image.open(image_path)
-            
-            # Decode QR codes
-            decoded = pyzbar.decode(image)
-            
-            if not decoded:
-                return None
+        # Try pyzbar first if available
+        if PYZBAR_AVAILABLE:
+            try:
+                # Open image
+                image = Image.open(image_path)
                 
-            # Get first QR code data
-            qr_data = decoded[0].data.decode('utf-8')
-            
-            # Parse JSON
-            config = json.loads(qr_data)
-            
-            return config
-            
-        except Exception as e:
-            print(f"QR decode error: {e}")
-            return None
+                # Decode QR codes
+                decoded = pyzbar.decode(image)
+                
+                if not decoded:
+                    return None
+                    
+                # Get first QR code data
+                qr_data = decoded[0].data.decode('utf-8')
+                
+                # Parse JSON
+                config = json.loads(qr_data)
+                
+                return config
+                
+            except Exception as e:
+                print(f"QR decode error with pyzbar: {e}")
+                
+        # Try OpenCV as fallback if available
+        if CV2_AVAILABLE:
+            try:
+                import cv2
+                img = cv2.imread(image_path)
+                detector = cv2.QRCodeDetector()
+                data, bbox, straight_qrcode = detector.detectAndDecode(img)
+                
+                if data:
+                    config = json.loads(data)
+                    return config
+                    
+            except Exception as e:
+                print(f"QR decode error with cv2: {e}")
+        
+        # If neither library works, prompt for manual entry
+        return None
     
     @staticmethod
     def detect_config_type(config: Dict[str, Any]) -> str:

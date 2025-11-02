@@ -23,11 +23,60 @@ CONFIG_PATH = os.path.expanduser("~/.kash_stash_config.json")
 
 DEFAULT_PROBE_ID = "29"
 
+class DialogManager:
+    """Manage tkinter dialogs to prevent Windows freezing"""
+    _root = None
+    
+    @classmethod
+    def get_root(cls):
+        """Get or create a single root window"""
+        if cls._root is None:
+            cls._root = tk.Tk()
+            cls._root.withdraw()
+        elif not cls._root.winfo_exists():
+            cls._root = tk.Tk()
+            cls._root.withdraw()
+        return cls._root
+    
+    @classmethod
+    def cleanup(cls):
+        """Clean up the root window"""
+        if cls._root and cls._root.winfo_exists():
+            try:
+                cls._root.destroy()
+            except:
+                pass
+            cls._root = None
+
 def resource_path(filename):
     """Get the absolute path to a bundled resource"""
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, filename)
     return os.path.abspath(filename)
+
+def get_dialog_root():
+    """Get appropriate root window for dialogs based on platform"""
+    if sys.platform.startswith('win'):
+        return DialogManager.get_root()
+    else:
+        root = tk.Tk()
+        root.withdraw()
+        return root
+
+def cleanup_dialog_root(root):
+    """Clean up dialog root based on platform"""
+    if sys.platform.startswith('win'):
+        # Don't destroy on Windows, just hide
+        try:
+            root.withdraw()
+        except:
+            pass
+    else:
+        # Destroy on Linux
+        try:
+            root.destroy()
+        except:
+            pass
 
 class TagSelectorDialog:
     """Custom dialog for selecting tags with history"""
@@ -256,6 +305,7 @@ class TagSelectorDialog:
             self.tag_values = []
             self.populate_list()
             self.show_status("History cleared")
+
 class KashStash:
     def __init__(self, headless=False):
         self.headless = headless
@@ -350,43 +400,49 @@ class KashStash:
     def select_tags_dialog(self):
         """Show tag selector dialog with history"""
         try:
-            root = tk.Tk()
-            root.title("Loading...")
-            root.geometry("200x50")
-            root.resizable(False, False)
+            if sys.platform.startswith('win'):
+                root = DialogManager.get_root()
+                root.deiconify()
+                root.title("Tag Selector")
+                root.geometry("200x50")
+            else:
+                root = tk.Tk()
+                root.title("Loading...")
+                root.geometry("200x50")
+                root.resizable(False, False)
             
             label = tk.Label(root, text="Opening tag selector...")
             label.pack(pady=10)
             root.update()
             
-            # Pass the recent_tags list directly (it will be modified in place)
             recent_tags = self.cfg.get('recent_tags', [])
             dialog = TagSelectorDialog(root, recent_tags)
             result = dialog.result
             
             # Save config in case tags were added/deleted in the dialog
-            self.cfg['recent_tags'] = recent_tags[:50]  # Ensure max 50 entries
+            self.cfg['recent_tags'] = recent_tags[:50]
             self.save_config()
             
-            root.destroy()
+            if sys.platform.startswith('win'):
+                root.withdraw()
+            else:
+                root.destroy()
+                
             return result if result else ""
             
         except Exception as e:
             print(f"Tag selector dialog failed: {e}")
             # Fallback to simple dialog
-            root = tk.Tk()
-            root.withdraw()
-            tags = simpledialog.askstring("Tags", "Enter tags (comma separated):") or ""
-            root.destroy()
+            root = get_dialog_root()
+            tags = simpledialog.askstring("Tags", "Enter tags (comma separated)", parent=root) or ""
+            cleanup_dialog_root(root)
             return tags
     
     def update_kash_files_clients(self):
         """Update the list of Kash Files client instances"""
         self.kash_files_clients = []
         for kf_config in self.cfg.get("kashFiles", []):
-            # Fix the API endpoint
             client = KashFilesClient(kf_config)
-            # Update the upload endpoint
             client.upload_endpoint = "/api/files/upload"
             self.kash_files_clients.append(client)
     
@@ -430,19 +486,19 @@ class KashStash:
             return
         
         # Select file
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         file_path = filedialog.askopenfilename(
             title="Select File to Upload",
-            filetypes=[("All files", "*.*")]
+            filetypes=[("All files", "*.*")],
+            parent=root
         )
         
         if not file_path:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
-        root.destroy()
+        cleanup_dialog_root(root)
         
         # Read file
         try:
@@ -537,8 +593,7 @@ class KashStash:
             messagebox.showwarning("Warning", "No endpoint configured for note upload")
     
     def setup_initial_config(self):
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         # Ask if they want to import from QR or configure manually
         choice = messagebox.askyesnocancel(
@@ -547,14 +602,15 @@ class KashStash:
             "Do you have a QR code to import?\n\n"
             "Yes = Import from QR code\n"
             "No = Manual configuration\n"
-            "Cancel = Exit"
+            "Cancel = Exit",
+            parent=root
         )
         
         if choice is None:  # Cancel
-            root.destroy()
+            cleanup_dialog_root(root)
             sys.exit(0)
         elif choice:  # Yes - import from QR
-            root.destroy()
+            cleanup_dialog_root(root)
             self.import_qr_config()
             # After import, check if we have endpoints
             if not self.cfg.get("endpoints"):
@@ -564,38 +620,39 @@ class KashStash:
                 )
                 self.setup_initial_config_manual()
         else:  # No - manual setup
-            root.destroy()
+            cleanup_dialog_root(root)
             self.setup_initial_config_manual()
     
     def setup_initial_config_manual(self):
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
+        
         messagebox.showinfo(
             "Manual Setup", 
             "Let's set up your first endpoint.\n"
             "You'll configure:\n"
             "1. POST probe for uploading files\n"
-            "2. Pod API for fetching digests and config (optional)"
+            "2. Pod API for fetching digests and config (optional)",
+            parent=root
         )
         
         # Basic endpoint info
-        name = simpledialog.askstring("Setup", "Endpoint name:") or "Default"
-        device = simpledialog.askstring("Setup", "Device name (optional):") or ""
+        name = simpledialog.askstring("Setup", "Endpoint name:", parent=root) or "Default"
+        device = simpledialog.askstring("Setup", "Device name (optional):", parent=root) or ""
         
         # POST probe configuration (for uploads)
-        messagebox.showinfo("Setup", "First, configure the POST probe for uploading files.")
-        key = simpledialog.askstring("Setup", "PROBE_KEY for POST ingest:") or ""
-        node = simpledialog.askstring("Setup", "NODE_NAME for POST ingest:") or ""
-        probe_id = simpledialog.askstring("Setup", f"PROBE_ID for POST ingest:", initialvalue=DEFAULT_PROBE_ID) or DEFAULT_PROBE_ID
+        messagebox.showinfo("Setup", "First, configure the POST probe for uploading files.", parent=root)
+        key = simpledialog.askstring("Setup", "PROBE_KEY for POST ingest:", parent=root) or ""
+        node = simpledialog.askstring("Setup", "NODE_NAME for POST ingest:", parent=root) or ""
+        probe_id = simpledialog.askstring("Setup", f"PROBE_ID for POST ingest:", initialvalue=DEFAULT_PROBE_ID, parent=root) or DEFAULT_PROBE_ID
         
         # Screenshot settings
-        save_screenshots = messagebox.askyesno("Setup", "Save screenshots locally?")
+        save_screenshots = messagebox.askyesno("Setup", "Save screenshots locally?", parent=root)
         folder = ""
         if save_screenshots:
-            folder = filedialog.askdirectory(title="Screenshot folder") or ""
+            folder = filedialog.askdirectory(title="Screenshot folder", parent=root) or ""
         
         # Pod configuration (optional)
-        has_pod = messagebox.askyesno("Setup", "Do you have a Pod for queue processing?\n(You can add this later)")
+        has_pod = messagebox.askyesno("Setup", "Do you have a Pod for queue processing?\n(You can add this later)", parent=root)
         pod_url = ""
         pod_key = ""
         config_digest_id = ""
@@ -603,27 +660,31 @@ class KashStash:
         cache_minutes = "5"
         
         if has_pod:
-            messagebox.showinfo("Setup", "Configure the Pod API for fetching digests and agent config.")
+            messagebox.showinfo("Setup", "Configure the Pod API for fetching digests and agent config.", parent=root)
             pod_url = simpledialog.askstring(
                 "Pod Setup", 
-                "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):"
+                "Pod API URL (e.g. https://probes-xxx.xyzpulseinfra.com):",
+                parent=root
             ) or ""
-            pod_key = simpledialog.askstring("Pod Setup", "Pod API Key (X-POD-KEY):") or ""
+            pod_key = simpledialog.askstring("Pod Setup", "Pod API Key (X-POD-KEY):", parent=root) or ""
             
             # Config digest settings
             config_digest_id = simpledialog.askstring(
                 "Config", 
-                "Agent config digest ID (the digest containing your YAML config):"
+                "Agent config digest ID (the digest containing your YAML config):",
+                parent=root
             ) or ""
             config_tags = simpledialog.askstring(
                 "Config",
                 "Tags to search for config and scripts (comma-separated):",
-                initialvalue="agent-config"
+                initialvalue="agent-config",
+                parent=root
             ) or "agent-config"
             cache_minutes = simpledialog.askstring(
                 "Config",
                 "Config cache minutes (0=always refresh, -1=cache forever, 5=refresh every 5 min):",
-                initialvalue="5"
+                initialvalue="5",
+                parent=root
             ) or "5"
         
         endpoint = {
@@ -652,7 +713,7 @@ class KashStash:
         self.cfg["endpoints"] = [endpoint]
         self.cfg["last_used_endpoint"] = 0
         self.save_config()
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def get_current_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
@@ -673,8 +734,7 @@ class KashStash:
     
     def import_qr_config(self):
         """Import configuration from QR code image"""
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         # Select image file
         image_path = filedialog.askopenfilename(
@@ -682,20 +742,32 @@ class KashStash:
             filetypes=[
                 ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp"),
                 ("All files", "*.*")
-            ]
+            ],
+            parent=root
         )
         
         if not image_path:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Decode QR
         config = QRConfigImporter.decode_qr_from_image(image_path)
         
         if not config:
-            messagebox.showerror("Error", "Could not decode QR code from image")
-            root.destroy()
-            return
+            # Try manual input as fallback
+            result = messagebox.askyesno(
+                "QR Decode Failed",
+                "Could not decode QR code from image.\n\n"
+                "Would you like to paste the QR code's JSON content manually?",
+                parent=root
+            )
+            if result:
+                cleanup_dialog_root(root)
+                self.import_qr_config_manual()
+                return
+            else:
+                cleanup_dialog_root(root)
+                return
         
         # Detect type
         config_type = QRConfigImporter.detect_config_type(config)
@@ -703,7 +775,7 @@ class KashStash:
         if config_type == 'kashFiles':
             # Add Kash Files instance
             name = config.get('name', 'Imported Kash Files')
-            if messagebox.askyesno("Import", f"Add Kash Files instance '{name}'?"):
+            if messagebox.askyesno("Import", f"Add Kash Files instance '{name}'?", parent=root):
                 if 'kashFiles' not in self.cfg:
                     self.cfg['kashFiles'] = []
                 self.cfg['kashFiles'].append({
@@ -713,7 +785,7 @@ class KashStash:
                 })
                 self.save_config()
                 self.update_kash_files_clients()
-                messagebox.showinfo("Success", f"Added Kash Files instance: {name}")
+                messagebox.showinfo("Success", f"Added Kash Files instance: {name}", parent=root)
                 
         elif config_type == 'mobile_endpoint':
             # Convert mobile config to desktop format
@@ -727,13 +799,13 @@ class KashStash:
                 "using 'Add Pod to endpoint' option."
             )
             
-            if messagebox.askyesno("Import Mobile Config", msg):
+            if messagebox.askyesno("Import Mobile Config", msg, parent=root):
                 # Ask for desktop-specific settings
                 desktop_config['KEEP_SCREENSHOTS'] = messagebox.askyesno(
-                    "Setup", "Save screenshots locally?"
+                    "Setup", "Save screenshots locally?", parent=root
                 )
                 if desktop_config['KEEP_SCREENSHOTS']:
-                    folder = filedialog.askdirectory(title="Screenshot folder") or ""
+                    folder = filedialog.askdirectory(title="Screenshot folder", parent=root) or ""
                     desktop_config['SCREENSHOT_FOLDER'] = folder
                 
                 self.cfg['endpoints'].append(desktop_config)
@@ -741,7 +813,8 @@ class KashStash:
                 messagebox.showinfo(
                     "Success", 
                     f"Added endpoint: {name}\n\n"
-                    "Remember to add Pod configuration for queue processing!"
+                    "Remember to add Pod configuration for queue processing!",
+                    parent=root
                 )
                 
         elif config_type == 'pod':
@@ -753,18 +826,80 @@ class KashStash:
                 "Apply this pod configuration to current endpoint?"
             )
             
-            if messagebox.askyesno("Pod Configuration", msg):
+            if messagebox.askyesno("Pod Configuration", msg, parent=root):
                 self.update_endpoint_pod(config)
                 
         else:
-            messagebox.showerror("Error", "Unknown QR code configuration type")
+            messagebox.showerror("Error", "Unknown QR code configuration type", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
+    
+    def import_qr_config_manual(self):
+        """Import configuration from manual JSON input"""
+        config_json = self.large_text_dialog(
+            "Paste QR Config JSON",
+            "Paste the JSON from the QR code here:\n\n"
+            "(Use a QR reader app to get the text from the QR code)"
+        )
+        
+        if not config_json:
+            return
+        
+        try:
+            config = json.loads(config_json)
+            
+            # Use the same logic as import_qr_config
+            config_type = QRConfigImporter.detect_config_type(config)
+            
+            root = get_dialog_root()
+            
+            if config_type == 'kashFiles':
+                name = config.get('name', 'Imported Kash Files')
+                if messagebox.askyesno("Import", f"Add Kash Files instance '{name}'?", parent=root):
+                    if 'kashFiles' not in self.cfg:
+                        self.cfg['kashFiles'] = []
+                    self.cfg['kashFiles'].append({
+                        'name': name,
+                        'url': config.get('url', ''),
+                        'key': config.get('key', '')
+                    })
+                    self.save_config()
+                    self.update_kash_files_clients()
+                    messagebox.showinfo("Success", f"Added Kash Files instance: {name}", parent=root)
+                    
+            elif config_type == 'mobile_endpoint':
+                desktop_config = QRConfigImporter.convert_mobile_to_desktop(config)
+                name = desktop_config.get('name', 'Imported')
+                
+                if messagebox.askyesno("Import Mobile Config", f"Add endpoint '{name}'?", parent=root):
+                    desktop_config['KEEP_SCREENSHOTS'] = messagebox.askyesno(
+                        "Setup", "Save screenshots locally?", parent=root
+                    )
+                    if desktop_config['KEEP_SCREENSHOTS']:
+                        folder = filedialog.askdirectory(title="Screenshot folder", parent=root) or ""
+                        desktop_config['SCREENSHOT_FOLDER'] = folder
+                    
+                    self.cfg['endpoints'].append(desktop_config)
+                    self.save_config()
+                    messagebox.showinfo("Success", f"Added endpoint: {name}", parent=root)
+                    
+            elif config_type == 'pod':
+                pod_name = config.get('name', 'Unknown Pod')
+                msg = f"Pod: {pod_name}\nApply this pod configuration to current endpoint?"
+                
+                if messagebox.askyesno("Pod Configuration", msg, parent=root):
+                    self.update_endpoint_pod(config)
+            else:
+                messagebox.showerror("Error", "Unknown configuration type", parent=root)
+                
+            cleanup_dialog_root(root)
+            
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", f"Invalid JSON: {e}")
     
     def import_kash_files_qr(self):
         """Import Kash Files instance specifically from QR code"""
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         # Select image file
         image_path = filedialog.askopenfilename(
@@ -772,19 +907,20 @@ class KashStash:
             filetypes=[
                 ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp"),
                 ("All files", "*.*")
-            ]
+            ],
+            parent=root
         )
         
         if not image_path:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Decode QR
         config = QRConfigImporter.decode_qr_from_image(image_path)
         
         if not config:
-            messagebox.showerror("Error", "Could not decode QR code from image")
-            root.destroy()
+            messagebox.showerror("Error", "Could not decode QR code from image", parent=root)
+            cleanup_dialog_root(root)
             return
         
         # Verify it's a Kash Files config
@@ -792,9 +928,10 @@ class KashStash:
             messagebox.showerror(
                 "Error", 
                 "This QR code does not contain a Kash Files configuration.\n"
-                "Kash Files QR codes should have type: 'kashFiles'"
+                "Kash Files QR codes should have type: 'kashFiles'",
+                parent=root
             )
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Add the Kash Files instance
@@ -820,14 +957,14 @@ class KashStash:
             f"{status_msg}"
         )
         
-        if messagebox.askyesno("Import Kash Files", msg):
+        if messagebox.askyesno("Import Kash Files", msg, parent=root):
             if 'kashFiles' not in self.cfg:
                 self.cfg['kashFiles'] = []
             
             # Check for duplicates
             existing = [kf['url'] for kf in self.cfg['kashFiles']]
             if url in existing:
-                messagebox.showwarning("Warning", f"A Kash Files instance with URL {url} already exists")
+                messagebox.showwarning("Warning", f"A Kash Files instance with URL {url} already exists", parent=root)
             else:
                 self.cfg['kashFiles'].append({
                     'name': name,
@@ -836,9 +973,9 @@ class KashStash:
                 })
                 self.save_config()
                 self.update_kash_files_clients()
-                messagebox.showinfo("Success", f"Added Kash Files instance: {name}")
+                messagebox.showinfo("Success", f"Added Kash Files instance: {name}", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def update_endpoint_pod(self, pod_config):
         """Update current endpoint with pod configuration from QR"""
@@ -865,13 +1002,12 @@ class KashStash:
     
     def add_pod_to_endpoint(self):
         """Add or update pod configuration for an endpoint via QR scan"""
-        root = tk.Tk() 
-        root.withdraw()
+        root = get_dialog_root()
         
         endpoints = self.cfg.get("endpoints", [])
         if not endpoints:
-            messagebox.showinfo("No Endpoints", "No endpoints configured. Add an endpoint first.")
-            root.destroy()
+            messagebox.showinfo("No Endpoints", "No endpoints configured. Add an endpoint first.", parent=root)
+            cleanup_dialog_root(root)
             return
         
         # Select endpoint to update
@@ -883,7 +1019,7 @@ class KashStash:
         )
         
         if not idx_str:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         try:
@@ -892,7 +1028,7 @@ class KashStash:
                 raise ValueError("Invalid index")
         except (ValueError, IndexError):
             messagebox.showerror("Error", "Invalid selection", parent=root)
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Select QR image
@@ -901,19 +1037,20 @@ class KashStash:
             filetypes=[
                 ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp"),
                 ("All files", "*.*")
-            ]
+            ],
+            parent=root
         )
         
         if not image_path:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Decode QR
         config = QRConfigImporter.decode_qr_from_image(image_path)
         
         if not config:
-            messagebox.showerror("Error", "Could not decode QR code from image")
-            root.destroy()
+            messagebox.showerror("Error", "Could not decode QR code from image", parent=root)
+            cleanup_dialog_root(root)
             return
         
         # Verify it's a pod config
@@ -921,9 +1058,10 @@ class KashStash:
             messagebox.showerror(
                 "Error", 
                 "This doesn't appear to be a pod configuration QR.\n"
-                "Pod QRs should contain 'entrance_url' and 'preshared_key'."
+                "Pod QRs should contain 'entrance_url' and 'preshared_key'.",
+                parent=root
             )
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Update the selected endpoint
@@ -937,14 +1075,15 @@ class KashStash:
             "Success",
             f"Updated endpoint '{endpoints[idx]['name']}' with pod configuration:\n"
             f"Pod: {config.get('name', 'Unknown')}\n"
-            f"URL: {pod_settings['POD_URL']}"
+            f"URL: {pod_settings['POD_URL']}",
+            parent=root
         )
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def edit_raw_config(self):
         """Open raw JSON config for editing"""
-        root = tk.Tk()
+        root = tk.Tk()  # Raw config editor gets its own window
         root.title("Edit Raw Configuration")
         root.geometry("800x600")
         
@@ -999,23 +1138,23 @@ class KashStash:
                 return
             
             # Ask what to do
-            root = tk.Tk()
-            root.withdraw()
+            root = get_dialog_root()
             
             choice = messagebox.askyesnocancel(
                 "Import Config",
                 "Replace entire configuration?\n\n"
                 "Yes = Replace all settings\n"
                 "No = Merge endpoints only\n"
-                "Cancel = Abort"
+                "Cancel = Abort",
+                parent=root
             )
             
             if choice is None:  # Cancel
-                root.destroy()
+                cleanup_dialog_root(root)
                 return
             elif choice:  # Yes - replace all
                 self.cfg = new_config
-                messagebox.showinfo("Success", "Configuration replaced!")
+                messagebox.showinfo("Success", "Configuration replaced!", parent=root)
             else:  # No - merge endpoints
                 # Add new endpoints
                 for ep in new_config.get('endpoints', []):
@@ -1033,11 +1172,11 @@ class KashStash:
                         if kf['name'] not in existing_names:
                             self.cfg['kashFiles'].append(kf)
                 
-                messagebox.showinfo("Success", "Configurations merged!")
+                messagebox.showinfo("Success", "Configurations merged!", parent=root)
             
             self.save_config()
             self.update_kash_files_clients()
-            root.destroy()
+            cleanup_dialog_root(root)
             
         except json.JSONDecodeError as e:
             messagebox.showerror("Error", f"Invalid JSON: {e}")
@@ -1046,8 +1185,7 @@ class KashStash:
     
     def manage_config(self):
         """Updated config management with new options"""
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         while True:
             # Show current status
@@ -1093,13 +1231,15 @@ class KashStash:
             choice = choice.lower().strip()
             
             if choice == 'q':
-                self.import_qr_config()  # General import - detects type
+                self.import_qr_config()
             elif choice == 'w':
-                self.import_kash_files_qr()  # Specific Kash Files import
+                self.import_kash_files_qr()
             elif choice == 'p':
                 self.add_pod_to_endpoint()
             elif choice == 'r':
+                cleanup_dialog_root(root)  # Close this before opening raw editor
                 self.edit_raw_config()
+                root = get_dialog_root()  # Get new root for next iteration
             elif choice == 'v':
                 self.paste_desktop_config()
             elif choice == 'a':
@@ -1115,16 +1255,15 @@ class KashStash:
             elif choice == 'f':
                 self.switch_kash_files()
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def add_endpoint(self):
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         # Basic info
         name = simpledialog.askstring("Add Endpoint", "Endpoint name:", parent=root)
         if not name:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         device = simpledialog.askstring("Add Endpoint", "Device name (optional):", parent=root) or ""
@@ -1204,36 +1343,35 @@ class KashStash:
         
         self.cfg["endpoints"].append(endpoint)
         self.save_config()
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def add_kash_files(self):
         """Add a new Kash Files instance"""
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         name = simpledialog.askstring("Add Kash Files", "Instance name:", parent=root)
         if not name:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         url = simpledialog.askstring("Add Kash Files", "Kash Files URL:", parent=root)
         if not url:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         key = simpledialog.askstring("Add Kash Files", "API Key (kf_xxx):", parent=root)
         if not key:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         # Test connection
         test_client = KashFilesClient({"name": name, "url": url, "key": key})
         test_client.upload_endpoint = "/api/files/upload"
         if test_client.test_connection():
-            messagebox.showinfo("Success", "Connection successful!")
+            messagebox.showinfo("Success", "Connection successful!", parent=root)
         else:
-            if not messagebox.askyesno("Warning", "Could not connect. Add anyway?"):
-                root.destroy()
+            if not messagebox.askyesno("Warning", "Could not connect. Add anyway?", parent=root):
+                cleanup_dialog_root(root)
                 return
         
         if 'kashFiles' not in self.cfg:
@@ -1247,7 +1385,7 @@ class KashStash:
         
         self.save_config()
         self.update_kash_files_clients()
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def edit_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
@@ -1255,14 +1393,13 @@ class KashStash:
             messagebox.showinfo("Edit", "No endpoints to edit")
             return
         
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         choices = "\n".join(f"{i+1}: {ep['name']}" for i, ep in enumerate(endpoints))
         idx_str = simpledialog.askstring("Edit Endpoint", f"Select endpoint:\n{choices}", parent=root)
         
         if not idx_str:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
             
         try:
@@ -1340,7 +1477,7 @@ class KashStash:
         except (ValueError, IndexError):
             messagebox.showerror("Edit", "Invalid selection", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def delete_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
@@ -1348,14 +1485,13 @@ class KashStash:
             messagebox.showinfo("Delete", "No endpoints to delete")
             return
         
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         choices = "\n".join(f"{i+1}: {ep['name']}" for i, ep in enumerate(endpoints))
         idx_str = simpledialog.askstring("Delete Endpoint", f"Select endpoint to delete:\n{choices}", parent=root)
         
         if not idx_str:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
             
         try:
@@ -1369,7 +1505,7 @@ class KashStash:
         except (ValueError, IndexError):
             messagebox.showerror("Delete", "Invalid selection", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def switch_endpoint(self):
         endpoints = self.cfg.get("endpoints", [])
@@ -1377,8 +1513,7 @@ class KashStash:
             messagebox.showinfo("Switch", "No endpoints configured")
             return
         
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         current = self.cfg.get("last_used_endpoint", 0)
         choices = "\n".join(
@@ -1388,7 +1523,7 @@ class KashStash:
         idx_str = simpledialog.askstring("Switch Endpoint", f"Select endpoint:\n{choices}", parent=root)
         
         if not idx_str:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
             
         try:
@@ -1400,7 +1535,7 @@ class KashStash:
         except (ValueError, IndexError):
             messagebox.showerror("Switch", "Invalid selection", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def switch_kash_files(self):
         """Switch current Kash Files instance"""
@@ -1409,8 +1544,7 @@ class KashStash:
             messagebox.showinfo("Switch", "No Kash Files instances configured")
             return
         
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         current = self.cfg.get("last_used_kash_files", 0)
         choices = "\n".join(
@@ -1420,7 +1554,7 @@ class KashStash:
         idx_str = simpledialog.askstring("Switch Kash Files", f"Select instance:\n{choices}", parent=root)
         
         if not idx_str:
-            root.destroy()
+            cleanup_dialog_root(root)
             return
         
         try:
@@ -1432,7 +1566,7 @@ class KashStash:
         except (ValueError, IndexError):
             messagebox.showerror("Switch", "Invalid selection", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def build_tags(self, user_tags, endpoint, filename=None):
         tags = []
@@ -1450,7 +1584,7 @@ class KashStash:
         return ",".join(tags)
     
     def large_text_dialog(self, title, initial_text=""):
-        root = tk.Tk()
+        root = tk.Tk()  # Text dialog gets its own window
         root.title(title)
         root.geometry("1280x720")
         result = {"text": None}
@@ -1484,12 +1618,11 @@ class KashStash:
         
         try:
             if sys.platform.startswith('win'):
-                # Windows code stays the same...
+                # Windows: Use Snip & Sketch
                 from PIL import ImageGrab
                 subprocess.Popen(["explorer", "ms-screenclip:"])
                 
-                root = tk.Tk()
-                root.withdraw()
+                root = get_dialog_root()
                 messagebox.showinfo(
                     "Screenshot", 
                     "Snip & Sketch is now open.\n\n"
@@ -1500,8 +1633,9 @@ class KashStash:
                     parent=root
                 )
                 
+                # Grab image from clipboard
                 image = ImageGrab.grabclipboard()
-                root.destroy()
+                cleanup_dialog_root(root)
                 
                 if image is None:
                     messagebox.showinfo("Info", "No screenshot found in clipboard - upload cancelled")
@@ -1646,6 +1780,7 @@ class KashStash:
             if os.path.exists(tmpfile):
                 print(f"[Screenshot] Cleaning up temp file")
                 os.remove(tmpfile)
+    
     def quick_note(self):
         note_text = self.large_text_dialog("Quick Note")
         if not note_text:
@@ -1679,8 +1814,7 @@ class KashStash:
             messagebox.showerror("Error", "No endpoint or Kash Files configured!")
             return
         
-        root = tk.Tk()
-        root.withdraw()
+        root = get_dialog_root()
         
         # Build choices
         choices = []
@@ -1749,15 +1883,16 @@ class KashStash:
                                     f"Uploaded to both!\n\n"
                                     f"• File uploaded to endpoint\n"
                                     f"• File uploaded to Kash Files\n"
-                                    f"• Caption with link uploaded to endpoint"
+                                    f"• Caption with link uploaded to endpoint",
+                                    parent=root
                                 )
                             else:
-                                messagebox.showwarning("Partial Success", "File uploaded to endpoint but Kash Files upload failed")
+                                messagebox.showwarning("Partial Success", "File uploaded to endpoint but Kash Files upload failed", parent=root)
                                 
                 except (ValueError, IndexError):
                     messagebox.showerror("Error", "Invalid selection", parent=root)
         
-        root.destroy()
+        cleanup_dialog_root(root)
     
     def upload_file(self, filename, file_data, content_type, tags, context, endpoint):
         """Upload file using POST probe (unchanged - still uses API bastion)"""
@@ -1903,6 +2038,9 @@ def create_tray_icon(app):
         app.open_portal()
     def on_exit(icon, item):
         icon.stop()
+        # Clean up DialogManager on exit
+        if sys.platform.startswith('win'):
+            DialogManager.cleanup()
     
     logo_path = resource_path('kash_stash_logo.png')
     image = Image.open(logo_path)
