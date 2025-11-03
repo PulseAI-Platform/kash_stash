@@ -24,7 +24,7 @@
             android:id="@+id/radioEndpoint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Node Endpoint"
+            android:text="Endpoint Only (AI Processing)"
             android:textColor="#FFFFFF"
             android:buttonTint="#FFFFFF"
             android:padding="12dp" />
@@ -33,7 +33,7 @@
             android:id="@+id/radioKashFiles"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Kash Files"
+            android:text="Kash Files Only (Link + Caption)"
             android:textColor="#FFFFFF"
             android:buttonTint="#FFFFFF"
             android:padding="12dp" />
@@ -42,7 +42,7 @@
             android:id="@+id/radioBoth"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Both (file + caption with link)"
+            android:text="Both (File to Kash Files + Link Digest to Endpoint)"
             android:textColor="#FFFFFF"
             android:buttonTint="#FFFFFF"
             android:padding="12dp" />
@@ -70,7 +70,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Upload"
+            android:text="Continue"
             android:backgroundTint="#FFFFFF"
             android:textColor="#111314"
             android:layout_marginStart="8dp" />

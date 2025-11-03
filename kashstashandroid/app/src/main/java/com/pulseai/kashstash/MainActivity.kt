@@ -17,7 +17,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
 import com.pulseai.kashstash.databinding.ActivityMainBinding
 import kotlinx.coroutines.CoroutineScope
@@ -43,13 +42,6 @@ class MainActivity : AppCompatActivity() {
     private val recentTagsManager = RecentTagsManager()
     private var tempPhotoUri: Uri? = null
     private var pendingCameraAction: (() -> Unit)? = null
-
-    // Photo picker
-    private val pickImageLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { showShareImageDialog(it) }
-    }
 
     // QR image picker from gallery
     private val qrImagePicker = registerForActivityResult(
@@ -81,7 +73,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        // Go to Portal (NEW)
+        // Go to Portal
         findViewById<Button>(R.id.portalButton).setOnClickListener {
             val url = "https://pulseaiplatform.com"
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -119,16 +111,6 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.manageKashFilesButton).setOnClickListener {
             showManageKashFilesDialog()
         }
-
-        // Quick Note FAB
-        findViewById<FloatingActionButton>(R.id.fab).setOnClickListener {
-            showQuickNoteDialog()
-        }
-
-        // Photo FAB
-        findViewById<FloatingActionButton?>(R.id.fab_photo)?.setOnClickListener {
-            pickImageLauncher.launch("image/*")
-        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -145,7 +127,7 @@ class MainActivity : AppCompatActivity() {
         val endpoint = config.endpoints.getOrNull(config.lastUsedEndpoint)
         endpointTv.text = if (endpoint == null) "Endpoint: (none)" else "Endpoint: ${endpoint.name}"
 
-        // Update Kash Files text - FIX THE INDEX ISSUE
+        // Update Kash Files text
         val kashFilesTv = findViewById<TextView>(R.id.currentKashFilesView)
         val kashFilesIndex = if (config.kashFiles.isEmpty()) -1 else config.lastUsedKashFiles
         val kashFiles = if (kashFilesIndex >= 0 && kashFilesIndex < config.kashFiles.size) {
@@ -458,14 +440,12 @@ class MainActivity : AppCompatActivity() {
                 this,
                 Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED -> {
-                // Permission already granted
                 captureQRPhoto()
             }
             ActivityCompat.shouldShowRequestPermissionRationale(
                 this,
                 Manifest.permission.CAMERA
             ) -> {
-                // Show explanation dialog
                 AlertDialog.Builder(this)
                     .setTitle("Camera Permission Required")
                     .setMessage("The camera is needed to scan QR codes. Please grant camera permission to use this feature.")
@@ -476,7 +456,6 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
             else -> {
-                // Request permission directly
                 requestCameraPermission()
             }
         }
@@ -502,23 +481,19 @@ class MainActivity : AppCompatActivity() {
             CAMERA_PERMISSION_REQUEST_CODE -> {
                 if (grantResults.isNotEmpty() &&
                     grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    // Permission granted, execute pending action
                     pendingCameraAction?.invoke()
                     pendingCameraAction = null
                 } else {
-                    // Permission denied
                     if (!ActivityCompat.shouldShowRequestPermissionRationale(
                             this,
                             Manifest.permission.CAMERA
                         )) {
-                        // User selected "Don't ask again"
                         AlertDialog.Builder(this)
                             .setTitle("Camera Permission Denied")
                             .setMessage("Camera permission is required to scan QR codes. You can enable it in Settings > Apps > Kash Stash > Permissions.")
                             .setPositiveButton("OK", null)
                             .show()
                     } else {
-                        // Just denied this time
                         Toast.makeText(
                             this,
                             "Camera permission denied. Cannot scan QR codes.",
@@ -567,12 +542,10 @@ class MainActivity : AppCompatActivity() {
     private fun importQRConfig(imageUri: Uri) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Show progress indicator
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Reading QR code...", Toast.LENGTH_SHORT).show()
                 }
 
-                // Decode QR from image
                 val decodedConfig = QRConfigImporter.decodeQRFromImage(imageUri, this@MainActivity)
 
                 if (decodedConfig == null) {
@@ -586,7 +559,6 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Detect config type
                 val configType = QRConfigImporter.detectConfigType(decodedConfig)
 
                 withContext(Dispatchers.Main) {
@@ -630,7 +602,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Test connection first
         CoroutineScope(Dispatchers.Main).launch {
             val connectionOk = withContext(Dispatchers.IO) {
                 KashFilesClient(kashFiles).testConnection()
@@ -745,7 +716,6 @@ class MainActivity : AppCompatActivity() {
     private fun addImportedEndpoint(endpoint: EndpointConfig) {
         val config = ConfigManager.load(this)
 
-        // Check for duplicates
         val existingNames = config.endpoints.map { it.name }
         if (existingNames.contains(endpoint.name)) {
             AlertDialog.Builder(this)
@@ -766,7 +736,7 @@ class MainActivity : AppCompatActivity() {
         val newEndpoints = config.endpoints + endpoint
         val newConfig = config.copy(
             endpoints = newEndpoints,
-            lastUsedEndpoint = newEndpoints.size - 1 // Switch to new endpoint
+            lastUsedEndpoint = newEndpoints.size - 1
         )
         ConfigManager.save(this, newConfig)
         updateCurrentInstancesText()
@@ -777,7 +747,6 @@ class MainActivity : AppCompatActivity() {
     private fun addImportedKashFiles(kashFiles: KashFilesConfig) {
         val config = ConfigManager.load(this)
 
-        // Check for duplicates
         val existingUrls = config.kashFiles.map { it.url }
         if (existingUrls.contains(kashFiles.url)) {
             AlertDialog.Builder(this)
@@ -791,7 +760,7 @@ class MainActivity : AppCompatActivity() {
         val newKashFiles = config.kashFiles + kashFiles
         val newConfig = config.copy(
             kashFiles = newKashFiles,
-            lastUsedKashFiles = newKashFiles.size - 1 // Switch to new instance
+            lastUsedKashFiles = newKashFiles.size - 1
         )
         ConfigManager.save(this, newConfig)
         updateCurrentInstancesText()
@@ -803,17 +772,26 @@ class MainActivity : AppCompatActivity() {
     private fun handleShareIntent(intent: Intent) {
         when (intent.action) {
             Intent.ACTION_SEND -> {
+                val type = intent.type ?: return
+
                 when {
-                    intent.type == "text/plain" -> {
+                    type == "text/plain" -> {
                         val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
                         if (!sharedText.isNullOrBlank()) {
-                            showShareTextDialog(sharedText)
+                            handleSharedLink(sharedText)
                         }
                     }
-                    intent.type?.startsWith("image/") == true -> {
+                    type.startsWith("image/") -> {
                         val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                         if (imageUri != null) {
-                            showShareImageDialog(imageUri)
+                            handleSharedImage(imageUri)
+                        }
+                    }
+                    else -> {
+                        // Handle other file types (raw files)
+                        val fileUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                        if (fileUri != null) {
+                            handleSharedRawFile(fileUri, type)
                         }
                     }
                 }
@@ -821,200 +799,145 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showShareTextDialog(sharedText: String) {
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-
-        val sharedTextView = TextView(this)
-        sharedTextView.text = sharedText
-        sharedTextView.setPadding(0, 0, 0, 16)
-
-        val noteInput = EditText(this)
-        noteInput.hint = "Add your note (optional)"
-
-        val contextInput = EditText(this)
-        contextInput.hint = "AI Context (optional)"
-
-        layout.setPadding(32, 24, 32, 0)
-        layout.addView(sharedTextView)
-        layout.addView(noteInput)
-        layout.addView(contextInput)
-
-        AlertDialog.Builder(this)
-            .setTitle("Share to Kash Stash")
-            .setView(layout)
-            .setPositiveButton("Select Tags") { _, _ ->
-                val userNote = noteInput.text.toString()
-                val finalText = if (userNote.isBlank()) sharedText else "$sharedText\n\n$userNote"
-                val context = contextInput.text.toString()
-
-                showTagSelectionDialog { tags ->
-                    uploadWithChoice(
-                        finalText.toByteArray(),
-                        "note_${System.currentTimeMillis()}.txt",
-                        "text/plain",
-                        tags,
-                        context
-                    )
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showShareImageDialog(imageUri: Uri) {
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-
-        val contextInput = EditText(this)
-        contextInput.hint = "AI Context (optional)"
-
-        layout.setPadding(32, 24, 32, 0)
-        layout.addView(contextInput)
-
-        AlertDialog.Builder(this)
-            .setTitle("Share Image to Kash Stash")
-            .setView(layout)
-            .setPositiveButton("Select Tags") { _, _ ->
-                val context = contextInput.text.toString()
-
-                showTagSelectionDialog { tags ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val inputStream = contentResolver.openInputStream(imageUri)
-                            val imageBytes = inputStream?.readBytes() ?: throw Exception("Failed to read image")
-                            inputStream.close()
-
-                            withContext(Dispatchers.Main) {
-                                uploadWithChoice(
-                                    imageBytes,
-                                    "image_${System.currentTimeMillis()}.jpg",
-                                    "image/jpeg",
-                                    tags,
-                                    context
-                                )
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Snackbar.make(binding.root, "Failed to read image: ${e.message}", Snackbar.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showQuickNoteDialog() {
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        val noteInput = EditText(this)
-        noteInput.hint = "Write a note…"
-        layout.setPadding(32, 24, 32, 0)
-        layout.addView(noteInput)
-
-        AlertDialog.Builder(this)
-            .setTitle("Quick Note")
-            .setView(layout)
-            .setPositiveButton("Select Tags") { _, _ ->
-                val note = noteInput.text.toString()
-                if (note.isNotBlank()) {
-                    showTagSelectionDialog { tags ->
-                        uploadWithChoice(
-                            note.toByteArray(),
-                            "note_${System.currentTimeMillis()}.txt",
-                            "text/plain",
-                            tags,
-                            note
-                        )
-                    }
-                } else {
-                    Toast.makeText(this, "Note is empty.", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    // ==== TAG SELECTION ====
-    private fun showTagSelectionDialog(callback: (String) -> Unit) {
+    // ==== SHARED LINK WORKFLOW ====
+// ==== SHARED LINK WORKFLOW ====
+    private fun handleSharedLink(linkText: String) {
         val config = ConfigManager.load(this)
-        val recentTags = recentTagsManager.getRecentTagsList(config)
+        val hasEndpoint = config.endpoints.isNotEmpty()
 
-        val dialog = TagSelectionDialog(recentTags) { tags ->
-            if (tags.isNotBlank()) {
-                // Update and SAVE the config with recent tags
-                val newConfig = recentTagsManager.updateRecentTags(tags, config)
-                ConfigManager.save(this, newConfig)
-            }
-            callback(tags)
+        if (!hasEndpoint) {
+            Snackbar.make(binding.root, "No endpoint configured!", Snackbar.LENGTH_LONG).show()
+            return
         }
-        dialog.show(supportFragmentManager, "tags")
+
+        // Skip destination choice, go straight to caption dialog
+        showCaptionDialogForLink(linkText)
     }
 
-    // ==== UPLOAD METHODS ====
-    private fun uploadWithChoice(
-        fileData: ByteArray,
-        filename: String,
-        contentType: String,
-        tags: String,
-        context: String
-    ) {
+    private fun showCaptionDialogForLink(linkText: String) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
+        val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
+        val previewView = dialogView.findViewById<TextView>(R.id.sharedContentPreview)
+        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+        val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
+        val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
+        val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
+        val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
+
+        titleView.text = "Share Link"
+        previewView.text = linkText
+        previewView.visibility = android.view.View.VISIBLE
+
+        var selectedTags = ""
+
+        btnSelectTags.setOnClickListener {
+            showTagSelectionDialog { tags ->
+                selectedTags = tags
+                tagsDisplay.text = if (tags.isBlank()) "Tags: (none)" else "Tags: $tags"
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        btnConfirm.setOnClickListener {
+            val caption = captionInput.text.toString().trim()
+
+            // Format: link text, newline, then caption (if provided)
+            val finalText = if (caption.isBlank()) {
+                linkText
+            } else {
+                "$linkText\n\n$caption"
+            }
+
+            dialog.dismiss()
+
+            val filename = "link_${System.currentTimeMillis()}.txt"
+            val fileData = finalText.toByteArray()
+
+            // Only upload to endpoint
+            uploadToEndpoint(fileData, filename, "text/plain", selectedTags, finalText)
+        }
+
+        dialog.show()
+    }
+    // ==== SHARED IMAGE WORKFLOW ====
+    private fun handleSharedImage(imageUri: Uri) {
         val config = ConfigManager.load(this)
         val hasEndpoint = config.endpoints.isNotEmpty()
         val hasKashFiles = config.kashFiles.isNotEmpty()
 
         when {
             !hasEndpoint && !hasKashFiles -> {
-                Snackbar.make(binding.root, "No endpoint or Kash Files configured!", Snackbar.LENGTH_SHORT).show()
-            }
-            hasEndpoint && !hasKashFiles -> {
-                // Only endpoint available
-                uploadToEndpoint(fileData, filename, contentType, tags, context)
-            }
-            !hasEndpoint && hasKashFiles -> {
-                // Only Kash Files available
-                uploadToKashFiles(fileData, filename, contentType, tags, context)
+                Snackbar.make(binding.root, "No endpoint or Kash Files configured!", Snackbar.LENGTH_LONG).show()
             }
             else -> {
-                // Both available, show choice dialog
-                showUploadDestinationDialog(fileData, filename, contentType, tags, context)
+                showDestinationChoiceForImage(imageUri)
             }
         }
     }
 
-    private fun showUploadDestinationDialog(
-        fileData: ByteArray,
-        filename: String,
-        contentType: String,
-        tags: String,
-        context: String
-    ) {
+    private fun showDestinationChoiceForImage(imageUri: Uri) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_upload_destination, null)
         val radioGroup = dialogView.findViewById<RadioGroup>(R.id.destinationRadioGroup)
+
+        val config = ConfigManager.load(this)
+        val hasEndpoint = config.endpoints.isNotEmpty()
+        val hasKashFiles = config.kashFiles.isNotEmpty()
+
+        // Update labels for image context
+        dialogView.findViewById<RadioButton>(R.id.radioEndpoint).text = "Endpoint Only (AI Captioning)"
+        dialogView.findViewById<RadioButton>(R.id.radioKashFiles).text = "Kash Files Only (Link + Caption)"
+        dialogView.findViewById<RadioButton>(R.id.radioBoth).text = "Both (Full image to endpoint + Link to Kash Files)"
+
+        dialogView.findViewById<RadioButton>(R.id.radioEndpoint).isEnabled = hasEndpoint
+        dialogView.findViewById<RadioButton>(R.id.radioKashFiles).isEnabled = hasKashFiles
+        dialogView.findViewById<RadioButton>(R.id.radioBoth).isEnabled = hasEndpoint && hasKashFiles
+
+        when {
+            hasEndpoint && hasKashFiles -> radioGroup.check(R.id.radioBoth)
+            hasEndpoint -> radioGroup.check(R.id.radioEndpoint)
+            hasKashFiles -> radioGroup.check(R.id.radioKashFiles)
+        }
 
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)
             .create()
 
         dialogView.findViewById<Button>(R.id.btnConfirmDestination).setOnClickListener {
-            when (radioGroup.checkedRadioButtonId) {
-                R.id.radioEndpoint -> {
-                    uploadToEndpoint(fileData, filename, contentType, tags, context)
-                    dialog.dismiss()
+            val destination = when (radioGroup.checkedRadioButtonId) {
+                R.id.radioEndpoint -> "endpoint"
+                R.id.radioKashFiles -> "kashfiles"
+                R.id.radioBoth -> "both"
+                else -> null
+            }
+
+            if (destination != null) {
+                dialog.dismiss()
+
+                // Read image data
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val inputStream = contentResolver.openInputStream(imageUri)
+                        val imageBytes = inputStream?.readBytes() ?: throw Exception("Failed to read image")
+                        inputStream.close()
+
+                        withContext(Dispatchers.Main) {
+                            showCaptionDialogForImage(imageBytes, destination)
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            Snackbar.make(binding.root, "Failed to read image: ${e.message}", Snackbar.LENGTH_SHORT).show()
+                        }
+                    }
                 }
-                R.id.radioKashFiles -> {
-                    uploadToKashFiles(fileData, filename, contentType, tags, context)
-                    dialog.dismiss()
-                }
-                R.id.radioBoth -> {
-                    uploadToBoth(fileData, filename, contentType, tags, context)
-                    dialog.dismiss()
-                }
-                else -> {
-                    Toast.makeText(this, "Please select a destination", Toast.LENGTH_SHORT).show()
-                }
+            } else {
+                Toast.makeText(this, "Please select a destination", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -1025,6 +948,180 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    private fun showCaptionDialogForImage(imageBytes: ByteArray, destination: String) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
+        val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
+        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+        val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
+        val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
+        val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
+        val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
+
+        titleView.text = "Share Image"
+        captionInput.hint = "Caption (optional)"
+
+        var selectedTags = ""
+
+        btnSelectTags.setOnClickListener {
+            showTagSelectionDialog { tags ->
+                selectedTags = tags
+                tagsDisplay.text = if (tags.isBlank()) "Tags: (none)" else "Tags: $tags"
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        btnConfirm.setOnClickListener {
+            val caption = captionInput.text.toString().trim()
+            dialog.dismiss()
+
+            val filename = "image_${System.currentTimeMillis()}.jpg"
+
+            when (destination) {
+                "endpoint" -> uploadToEndpoint(imageBytes, filename, "image/jpeg", selectedTags, caption)
+                "kashfiles" -> uploadImageToKashFilesOnly(imageBytes, filename, selectedTags, caption)
+                "both" -> uploadImageToBoth(imageBytes, filename, selectedTags, caption)
+            }
+        }
+
+        dialog.show()
+    }
+
+    // ==== SHARED RAW FILE WORKFLOW ====
+    private fun handleSharedRawFile(fileUri: Uri, mimeType: String) {
+        val config = ConfigManager.load(this)
+
+        if (config.kashFiles.isEmpty()) {
+            Snackbar.make(
+                binding.root,
+                "Raw file uploads require Kash Files to be configured!",
+                Snackbar.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        // Read file data
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val inputStream = contentResolver.openInputStream(fileUri)
+                val fileBytes = inputStream?.readBytes() ?: throw Exception("Failed to read file")
+                inputStream.close()
+
+                // Try to get filename
+                val filename = getFileNameFromUri(fileUri) ?: "file_${System.currentTimeMillis()}"
+
+                withContext(Dispatchers.Main) {
+                    showCaptionDialogForRawFile(fileBytes, filename, mimeType)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Snackbar.make(
+                        binding.root,
+                        "Failed to read file: ${e.message}",
+                        Snackbar.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun getFileNameFromUri(uri: Uri): String? {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            val cursor = contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        result = it.getString(nameIndex)
+                    }
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.path
+            val cut = result?.lastIndexOf('/')
+            if (cut != -1 && cut != null) {
+                result = result?.substring(cut + 1)
+            }
+        }
+        return result
+    }
+
+    private fun showCaptionDialogForRawFile(fileBytes: ByteArray, filename: String, mimeType: String) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
+        val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
+        val previewView = dialogView.findViewById<TextView>(R.id.sharedContentPreview)
+        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+        val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
+        val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
+        val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
+        val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
+
+        titleView.text = "Upload File to Kash Files"
+        previewView.text = "File: $filename\nType: $mimeType"
+        previewView.visibility = android.view.View.VISIBLE
+
+        var selectedTags = ""
+
+        btnSelectTags.setOnClickListener {
+            showTagSelectionDialog { tags ->
+                selectedTags = tags
+                tagsDisplay.text = if (tags.isBlank()) "Tags: (none)" else "Tags: $tags"
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        btnConfirm.setOnClickListener {
+            val caption = captionInput.text.toString().trim()
+            dialog.dismiss()
+
+            val config = ConfigManager.load(this)
+            val hasEndpoint = config.endpoints.isNotEmpty()
+
+            if (hasEndpoint) {
+                // Upload to Kash Files, then create link digest
+                uploadRawFileToBoth(fileBytes, filename, mimeType, selectedTags, caption)
+            } else {
+                // Just upload to Kash Files
+                uploadRawFileToKashFilesOnly(fileBytes, filename, mimeType, selectedTags, caption)
+            }
+        }
+
+        dialog.show()
+    }
+
+    // ==== TAG SELECTION ====
+    private fun showTagSelectionDialog(callback: (String) -> Unit) {
+        val config = ConfigManager.load(this)
+        val recentTags = recentTagsManager.getRecentTagsList(config)
+
+        val dialog = TagSelectionDialog(recentTags) { tags ->
+            if (tags.isNotBlank()) {
+                val newConfig = recentTagsManager.updateRecentTags(tags, config)
+                ConfigManager.save(this, newConfig)
+            }
+            callback(tags)
+        }
+        dialog.show(supportFragmentManager, "tags")
+    }
+
+    // ==== UPLOAD METHODS ====
+
+    // Endpoint upload (unchanged)
     private fun uploadToEndpoint(
         fileData: ByteArray,
         filename: String,
@@ -1071,7 +1168,6 @@ class MainActivity : AppCompatActivity() {
                     .build()
 
                 val response = client.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
 
                 val message = if (response.isSuccessful) {
                     "✅ Uploaded to endpoint!"
@@ -1090,18 +1186,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun uploadToKashFiles(
+    // Kash Files only (link/text)
+    private fun uploadToKashFilesOnly(
         fileData: ByteArray,
         filename: String,
         contentType: String,
         tags: String,
-        context: String
+        caption: String
     ) {
         CoroutineScope(Dispatchers.Main).launch {
             val config = ConfigManager.load(this@MainActivity)
-
-            // Check if we have an endpoint for the link digest
-            val hasEndpoint = config.endpoints.isNotEmpty()
             val kf = config.kashFiles.getOrNull(config.lastUsedKashFiles)
 
             if (kf == null) {
@@ -1110,40 +1204,113 @@ class MainActivity : AppCompatActivity() {
             }
 
             val client = KashFilesClient(kf)
-            val result = client.uploadFile(filename, fileData, contentType, tags, context)
+            val result = client.uploadFile(filename, fileData, contentType, tags, caption)
+
+            if (result.ok && result.download != null) {
+                val fullUrl = "${kf.url}${result.download}"
+                Snackbar.make(
+                    binding.root,
+                    "✅ Uploaded to Kash Files!\nURL: $fullUrl",
+                    Snackbar.LENGTH_LONG
+                ).show()
+            } else {
+                Snackbar.make(binding.root, "❌ Upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Link upload to both
+    private fun uploadLinkToBoth(
+        fileData: ByteArray,
+        filename: String,
+        tags: String,
+        fullText: String
+    ) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val config = ConfigManager.load(this@MainActivity)
+            val kf = config.kashFiles.getOrNull(config.lastUsedKashFiles)
+
+            if (kf == null) {
+                Snackbar.make(binding.root, "No Kash Files selected!", Snackbar.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            // Upload to Kash Files first
+            val client = KashFilesClient(kf)
+            val result = client.uploadFile(filename, fileData, "text/plain", tags, fullText)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
 
-                // If we have an endpoint, also create a digest with the link
+                // Create link digest
+                val linkDigest = """
+                Link saved to Kash Files
+                URL: $fullUrl
+                
+                $fullText
+                """.trimIndent()
+
+                val linkFilename = "link_${System.currentTimeMillis()}.txt"
+
+                // Upload link digest to endpoint
+                uploadToEndpoint(
+                    linkDigest.toByteArray(),
+                    linkFilename,
+                    "text/plain",
+                    tags,
+                    linkDigest
+                )
+
+                Snackbar.make(
+                    binding.root,
+                    "✅ Uploaded to both!\n→ Kash Files\n→ Link digest to endpoint",
+                    Snackbar.LENGTH_LONG
+                ).show()
+            } else {
+                Snackbar.make(binding.root, "❌ Kash Files upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Image to Kash Files only (with caption)
+    private fun uploadImageToKashFilesOnly(
+        imageBytes: ByteArray,
+        filename: String,
+        tags: String,
+        caption: String
+    ) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val config = ConfigManager.load(this@MainActivity)
+            val kf = config.kashFiles.getOrNull(config.lastUsedKashFiles)
+
+            if (kf == null) {
+                Snackbar.make(binding.root, "No Kash Files selected!", Snackbar.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            val client = KashFilesClient(kf)
+            val result = client.uploadFile(filename, imageBytes, "image/jpeg", tags, caption)
+
+            if (result.ok && result.download != null) {
+                val fullUrl = "${kf.url}${result.download}"
+
+                // Create text digest with link and caption
+                val filenameTag = filename.substringBeforeLast('.')
+                val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
+
+                val config = ConfigManager.load(this@MainActivity)
+                val hasEndpoint = config.endpoints.isNotEmpty()
+
                 if (hasEndpoint) {
-                    val isImage = contentType.startsWith("image/")
-
-                    // Add filename as tag
-                    val filenameTag = filename.substringBeforeLast('.')
-                    val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
-
-                    val linkText = if (isImage) {
-                        """
-                    Image uploaded to Kash Files
-                    File: $filename
+                    val linkText = """
+                    Image: $filename
                     Link: $fullUrl
                     
-                    ${if (context.isNotBlank()) context else "View or download the image at the link above."}
+                    ${if (caption.isNotBlank()) caption else "Image uploaded to Kash Files"}
                     """.trimIndent()
-                    } else {
-                        """
-                    File uploaded to Kash Files
-                    File: $filename
-                    Link: $fullUrl
-                    
-                    ${if (context.isNotBlank()) context else "Download the file at the link above."}
-                    """.trimIndent()
-                    }
 
-                    val linkFilename = "kf_link_${filename.substringBeforeLast('.')}_${Instant.now().epochSecond}.txt"
+                    val linkFilename = "img_link_${System.currentTimeMillis()}.txt"
 
-                    // Upload the link digest to endpoint
                     uploadToEndpoint(
                         linkText.toByteArray(),
                         linkFilename,
@@ -1154,14 +1321,13 @@ class MainActivity : AppCompatActivity() {
 
                     Snackbar.make(
                         binding.root,
-                        "✅ Uploaded to Kash Files + link saved!\nURL: $fullUrl",
+                        "✅ Image uploaded!\n→ Kash Files\n→ Link digest to endpoint",
                         Snackbar.LENGTH_LONG
                     ).show()
                 } else {
-                    // No endpoint, just show the Kash Files URL
                     Snackbar.make(
                         binding.root,
-                        "✅ Uploaded to Kash Files!\nURL: $fullUrl",
+                        "✅ Image uploaded to Kash Files!\nURL: $fullUrl",
                         Snackbar.LENGTH_LONG
                     ).show()
                 }
@@ -1171,12 +1337,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun uploadToBoth(
-        fileData: ByteArray,
+    // Image to both
+    private fun uploadImageToBoth(
+        imageBytes: ByteArray,
         filename: String,
-        contentType: String,
         tags: String,
-        context: String
+        caption: String
     ) {
         CoroutineScope(Dispatchers.Main).launch {
             val config = ConfigManager.load(this@MainActivity)
@@ -1187,77 +1353,137 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // 1. Upload to Kash Files first
+            // Upload to Kash Files first
             val client = KashFilesClient(kf)
-            val result = client.uploadFile(filename, fileData, contentType, tags, context)
+            val result = client.uploadFile(filename, imageBytes, "image/jpeg", tags, caption)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-                val isImage = contentType.startsWith("image/")
 
-                // Add the filename (without extension) as a tag
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
-                if (isImage) {
-                    // For images: FIRST upload the link/caption, THEN the actual image
-                    // This ensures caption appears below image in UI
-
-                    // 1. Create and upload the link reference note FIRST
-                    val linkNote = """
-                    Image link for: $filename
-                    Kash Files URL: $fullUrl
-                    
-                    This image has been processed by AI captioning (see digest above).
-                    The full resolution image is available at the link above.
+                // Create link note
+                val linkNote = """
+                Image: $filename
+                Kash Files URL: $fullUrl
+                
+                ${if (caption.isNotBlank()) caption else "Full resolution image available at link above."}
                 """.trimIndent()
 
-                    val linkFilename = "link_${filename.substringBeforeLast('.')}_${Instant.now().epochSecond}.txt"
+                val linkFilename = "link_${filenameTag}_${Instant.now().epochSecond}.txt"
 
-                    uploadToEndpoint(
-                        linkNote.toByteArray(),
-                        linkFilename,
-                        "text/plain",
-                        enhancedTags,  // Use enhanced tags with filename
-                        linkNote
-                    )
+                // Upload link note FIRST
+                uploadToEndpoint(
+                    linkNote.toByteArray(),
+                    linkFilename,
+                    "text/plain",
+                    enhancedTags,
+                    linkNote
+                )
 
-                    // 2. Small delay to ensure order
-                    kotlinx.coroutines.delay(100)
+                // Delay to ensure order
+                delay(100)
 
-                    // 3. Upload the ACTUAL IMAGE SECOND for AI processing
-                    uploadToEndpoint(fileData, filename, contentType, enhancedTags, context)
+                // Upload actual image for AI processing
+                uploadToEndpoint(imageBytes, filename, "image/jpeg", enhancedTags, caption)
 
-                    Snackbar.make(
-                        binding.root,
-                        "✅ Image uploaded to both!\n→ Full image for AI processing\n→ Kash Files link saved",
-                        Snackbar.LENGTH_LONG
-                    ).show()
-                } else {
-                    // For non-images: Just create a link reference
-                    val captionText = """
-                    File: $filename
-                    Link: $fullUrl
-                    
-                    $context
+                Snackbar.make(
+                    binding.root,
+                    "✅ Image uploaded to both!\n→ Full image for AI\n→ Kash Files link saved",
+                    Snackbar.LENGTH_LONG
+                ).show()
+            } else {
+                Snackbar.make(binding.root, "❌ Kash Files upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Raw file to Kash Files only
+    private fun uploadRawFileToKashFilesOnly(
+        fileBytes: ByteArray,
+        filename: String,
+        mimeType: String,
+        tags: String,
+        caption: String
+    ) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val config = ConfigManager.load(this@MainActivity)
+            val kf = config.kashFiles.getOrNull(config.lastUsedKashFiles)
+
+            if (kf == null) {
+                Snackbar.make(binding.root, "No Kash Files selected!", Snackbar.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            val client = KashFilesClient(kf)
+            val result = client.uploadFile(filename, fileBytes, mimeType, tags, caption)
+
+            if (result.ok && result.download != null) {
+                val fullUrl = "${kf.url}${result.download}"
+                Snackbar.make(
+                    binding.root,
+                    "✅ File uploaded to Kash Files!\nURL: $fullUrl",
+                    Snackbar.LENGTH_LONG
+                ).show()
+            } else {
+                Snackbar.make(binding.root, "❌ Upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Raw file to both
+    private fun uploadRawFileToBoth(
+        fileBytes: ByteArray,
+        filename: String,
+        mimeType: String,
+        tags: String,
+        caption: String
+    ) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val config = ConfigManager.load(this@MainActivity)
+            val kf = config.kashFiles.getOrNull(config.lastUsedKashFiles)
+
+            if (kf == null) {
+                Snackbar.make(binding.root, "No Kash Files selected!", Snackbar.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            // Upload to Kash Files
+            val client = KashFilesClient(kf)
+            val result = client.uploadFile(filename, fileBytes, mimeType, tags, caption)
+
+            if (result.ok && result.download != null) {
+                val fullUrl = "${kf.url}${result.download}"
+
+                val filenameTag = filename.substringBeforeLast('.')
+                val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
+
+                // Create link digest
+                val linkDigest = """
+                File: $filename
+                Type: $mimeType
+                Link: $fullUrl
+                
+                ${if (caption.isNotBlank()) caption else "Download file at link above."}
                 """.trimIndent()
 
-                    val captionFilename = "linked_${filename.substringBeforeLast('.')}_${Instant.now().epochSecond}.txt"
+                val linkFilename = "file_link_${filenameTag}_${Instant.now().epochSecond}.txt"
 
-                    uploadToEndpoint(
-                        captionText.toByteArray(),
-                        captionFilename,
-                        "text/plain",
-                        enhancedTags,
-                        captionText
-                    )
+                // Upload link digest to endpoint
+                uploadToEndpoint(
+                    linkDigest.toByteArray(),
+                    linkFilename,
+                    "text/plain",
+                    enhancedTags,
+                    linkDigest
+                )
 
-                    Snackbar.make(
-                        binding.root,
-                        "✅ File uploaded!\n→ Kash Files (full file)\n→ Endpoint (link reference)",
-                        Snackbar.LENGTH_LONG
-                    ).show()
-                }
+                Snackbar.make(
+                    binding.root,
+                    "✅ File uploaded!\n→ Kash Files (full file)\n→ Endpoint (link reference)",
+                    Snackbar.LENGTH_LONG
+                ).show()
             } else {
                 Snackbar.make(binding.root, "❌ Kash Files upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
             }
