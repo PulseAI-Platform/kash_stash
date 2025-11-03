@@ -64,163 +64,97 @@ struct ContentView: View {
                         }
                     }
 
-                    // 2. Main Menu – only if endpoints exist
+                    // 2. Main Status – only if endpoints exist
                     if !viewModel.config.endpoints.isEmpty {
-                        VStack(spacing: 24) {
-                            // Current configuration status
-                            VStack(spacing: 12) {
-                                // Endpoint info
-                                if let ep = viewModel.currentEndpoint {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            Image(systemName: "server.rack")
-                                                .foregroundColor(.green)
-                                            Text("Active Endpoint")
-                                                .font(.headline)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        Text(ep.name)
-                                            .font(.title2)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(.primary)
-                                        
-                                        if !ep.device.isEmpty {
-                                            Text("Device: \(ep.device)")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding()
-                                    .background(Color(.systemGray6))
-                                    .cornerRadius(12)
-                                } else {
+                        VStack(spacing: 12) {
+                            // Endpoint info
+                            if let ep = viewModel.currentEndpoint {
+                                VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Image(systemName: "exclamationmark.circle")
-                                            .foregroundColor(.red)
-                                        Text("No endpoint selected")
-                                            .foregroundColor(.red)
+                                        Image(systemName: "server.rack")
+                                            .foregroundColor(.green)
+                                        Text("Active Endpoint")
                                             .font(.headline)
+                                            .foregroundColor(.secondary)
                                     }
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                                    .background(Color(.systemGray6))
-                                    .cornerRadius(12)
-                                }
-                                
-                                // Kash Files info
-                                if let kf = viewModel.currentKashFiles {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            Image(systemName: "icloud.fill")
-                                                .foregroundColor(.blue)
-                                            Text("Kash Files")
-                                                .font(.headline)
-                                                .foregroundColor(.secondary)
-                                            
-                                            Spacer()
-                                            
-                                            Text("ACTIVE")
-                                                .font(.caption)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.green)
-                                                .foregroundColor(.white)
-                                                .cornerRadius(4)
-                                        }
-                                        
-                                        Text(kf.name)
-                                            .font(.body)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        
-                                        Text(kf.url)
+                                    
+                                    Text(ep.name)
+                                        .font(.title2)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                    
+                                    if !ep.device.isEmpty {
+                                        Text("Device: \(ep.device)")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding()
-                                    .background(Color(.systemGray6))
-                                    .cornerRadius(12)
-                                }
-                                
-                                // Current upload destination indicator
-                                HStack {
-                                    Image(systemName: "arrow.up.circle")
-                                        .foregroundColor(.orange)
-                                    Text("Default Upload: \(viewModel.selectedUploadDestination.rawValue)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal)
+                                .padding()
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
+                            } else {
+                                HStack {
+                                    Image(systemName: "exclamationmark.circle")
+                                        .foregroundColor(.red)
+                                    Text("No endpoint selected")
+                                        .foregroundColor(.red)
+                                        .font(.headline)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
                             }
-
-                            // Action buttons
-                            VStack(spacing: 16) {
-                                NavigationLink(destination: QuickNoteView(viewModel: viewModel)) {
+                            
+                            // Kash Files info
+                            if let kf = viewModel.currentKashFiles {
+                                VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Image(systemName: "note.text")
-                                            .font(.title3)
-                                        Text("Quick Note")
+                                        Image(systemName: "icloud.fill")
+                                            .foregroundColor(.blue)
+                                        Text("Kash Files")
                                             .font(.headline)
-                                            .fontWeight(.semibold)
+                                            .foregroundColor(.secondary)
+                                        
+                                        Spacer()
+                                        
+                                        Text("ACTIVE")
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.green)
+                                            .foregroundColor(.white)
+                                            .cornerRadius(4)
                                     }
-                                    .foregroundColor(.white)
-                                    .padding(.vertical, 14)
-                                    .frame(maxWidth: .infinity)
-                                    .background(Color.black)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white, lineWidth: 2)
-                                    )
-                                    .cornerRadius(12)
+                                    
+                                    Text(kf.name)
+                                        .font(.body)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                    
+                                    Text(kf.url)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
                                 }
-                                .accessibilityHint("Create and upload a text note")
-                                
-                                NavigationLink(destination: PhotoUploadView(viewModel: viewModel)) {
-                                    HStack {
-                                        Image(systemName: "camera")
-                                            .font(.title3)
-                                        Text("Take Photo")
-                                            .font(.headline)
-                                            .fontWeight(.semibold)
-                                    }
-                                    .foregroundColor(.white)
-                                    .padding(.vertical, 14)
-                                    .frame(maxWidth: .infinity)
-                                    .background(Color.black)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white, lineWidth: 2)
-                                    )
-                                    .cornerRadius(12)
-                                }
-                                .accessibilityHint("Take and upload a photo")
-                                
-                                NavigationLink(destination: FileUploadView(viewModel: viewModel)) {
-                                    HStack {
-                                        Image(systemName: "doc.badge.arrow.up")
-                                            .font(.title3)
-                                        Text("Upload File")
-                                            .font(.headline)
-                                            .fontWeight(.semibold)
-                                    }
-                                    .foregroundColor(.white)
-                                    .padding(.vertical, 14)
-                                    .frame(maxWidth: .infinity)
-                                    .background(Color.black)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white, lineWidth: 2)
-                                    )
-                                    .cornerRadius(12)
-                                }
-                                .accessibilityHint("Select and upload a file")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
                             }
+                            
+                            // Current upload destination indicator
+                            HStack {
+                                Image(systemName: "arrow.up.circle")
+                                    .foregroundColor(.orange)
+                                Text("Default Upload: \(viewModel.selectedUploadDestination.rawValue)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
                         }
                     }
 

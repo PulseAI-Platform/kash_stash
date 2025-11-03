@@ -43,7 +43,47 @@ class ShareViewController: UIViewController {
         
         selectedDestination = loadedConfig.defaultUploadDestination
     }
-
+    
+    // 🆕 NEW METHOD: Save tags after successful upload
+    func saveTagsToConfig() {
+        guard !extraTags.isEmpty else { return }
+        
+        // Reload config fresh to avoid overwriting main app changes
+        let fm = FileManager.default
+        let url = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pulseai.kashstash")?
+            .appendingPathComponent("kash_stash_config.json")
+        
+        guard let cfgURL = url else { return }
+        
+        // Load the latest config
+        var config: AppConfig
+        if let data = try? Data(contentsOf: cfgURL),
+           let loadedConfig = try? JSONDecoder().decode(AppConfig.self, from: data) {
+            config = loadedConfig
+        } else {
+            // Use our cached one if can't load
+            guard var cachedConfig = self.config else { return }
+            config = cachedConfig
+        }
+        
+        // Add the new tags
+        RecentTagsManager.addTags(extraTags, to: &config)
+        
+        // Save back
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(config)
+            
+            // Write atomically to prevent corruption
+            try data.write(to: cfgURL, options: .atomic)
+            
+            // Update our local cache
+            self.config = config
+        } catch {
+            // Silent fail - can't log in share extension effectively
+        }
+    }
     func presentInputIfNeededAndContinue() {
         guard let extensionItem = extensionContext?.inputItems.first as? NSExtensionItem,
               let attachments = extensionItem.attachments else {
@@ -149,30 +189,99 @@ class ShareViewController: UIViewController {
     }
     
     func showTagsPrompt(isPhoto: Bool, isFile: Bool, isText: Bool) {
+        // Get recent tags
+        let recentTagStrings = config?.recentTags.prefix(10).map { $0.value } ?? []
+        
         let alert = UIAlertController(
             title: "Pulse AI Share",
             message: nil,
             preferredStyle: .alert
         )
         
-        alert.addTextField { tf in tf.placeholder = "Tags (comma separated)" }
+        alert.addTextField { tf in
+            tf.placeholder = "Tags (comma separated)"
+            tf.autocapitalizationType = .none
+            tf.autocorrectionType = .no
+            tf.text = self.extraTags // Preserve any existing tags
+        }
+        
+        // Add buttons for recent tags (max 5 to keep it clean)
+        for tag in recentTagStrings.prefix(5) {
+            alert.addAction(UIAlertAction(title: "➕ \(tag)", style: .default) { _ in
+                // Get current text
+                let currentText = alert.textFields?[0].text ?? ""
+                
+                // Add tag if not already there
+                let currentTags = Set(currentText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+                if !currentTags.contains(tag) {
+                    if currentText.isEmpty {
+                        self.extraTags = tag
+                    } else {
+                        self.extraTags = currentText + "," + tag
+                    }
+                } else {
+                    self.extraTags = currentText
+                }
+                
+                // Save other fields
+                if isPhoto {
+                    if self.selectedDestination == .endpointOnly {
+                        self.photoContextPrompt = alert.textFields?[1].text ?? ""
+                    } else if self.selectedDestination == .kashFilesOnly {
+                        self.extraNote = alert.textFields?[1].text ?? ""
+                    } else if self.selectedDestination == .both {
+                        self.photoContextPrompt = alert.textFields?[1].text ?? ""
+                        self.extraNote = alert.textFields?[2].text ?? ""
+                    }
+                } else if alert.textFields?.count ?? 0 > 1 {
+                    self.extraNote = alert.textFields?[1].text ?? ""
+                }
+                
+                // Re-show the prompt with updated tags
+                self.showTagsPrompt(isPhoto: isPhoto, isFile: isFile, isText: isText)
+            })
+        }
         
         if isPhoto {
             if selectedDestination == .endpointOnly {
-                alert.addTextField { tf in tf.placeholder = "AI context prompt (optional)" }
+                alert.addTextField { tf in
+                    tf.placeholder = "AI context prompt (optional)"
+                    tf.text = self.photoContextPrompt
+                }
             } else if selectedDestination == .kashFilesOnly {
-                alert.addTextField { tf in tf.placeholder = "Caption/description (optional)" }
+                alert.addTextField { tf in
+                    tf.placeholder = "Caption/description (optional)"
+                    tf.text = self.extraNote
+                }
             } else if selectedDestination == .both {
-                alert.addTextField { tf in tf.placeholder = "AI context prompt (optional)" }
-                alert.addTextField { tf in tf.placeholder = "Caption/description (optional)" }
+                alert.addTextField { tf in
+                    tf.placeholder = "AI context prompt (optional)"
+                    tf.text = self.photoContextPrompt
+                }
+                alert.addTextField { tf in
+                    tf.placeholder = "Caption/description (optional)"
+                    tf.text = self.extraNote
+                }
             }
         } else if isFile {
-            alert.addTextField { tf in tf.placeholder = "File caption/description (optional)" }
+            alert.addTextField { tf in
+                tf.placeholder = "File caption/description (optional)"
+                tf.text = self.extraNote
+            }
         } else if isText {
-            alert.addTextField { tf in tf.placeholder = "Additional note (optional)" }
+            alert.addTextField { tf in
+                tf.placeholder = "Additional note (optional)"
+                tf.text = self.extraNote
+            }
         }
         
-        alert.addAction(UIAlertAction(title: "Share", style: .default) { _ in
+        // Cancel button
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+            self.finishWithMessage("Upload cancelled.")
+        })
+        
+        // Share button - using .default style but we'll make it blue
+        let shareAction = UIAlertAction(title: "Share", style: .default) { _ in
             self.extraTags = alert.textFields?[0].text ?? ""
             
             if isPhoto {
@@ -191,13 +300,21 @@ class ShareViewController: UIViewController {
             }
             
             self.handleIncoming()
-        })
-        
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-            self.finishWithMessage("Upload cancelled.")
-        })
+        }
+        alert.addAction(shareAction)
+        alert.preferredAction = shareAction // This makes it blue/bold
         
         present(alert, animated: true)
+    }
+
+    @objc func dismissPicker() {
+        view.endEditing(true)
+    }
+    @objc func clearTags() {
+        if let alert = presentedViewController as? UIAlertController,
+           let tf = alert.textFields?.first {
+            tf.text = ""
+        }
     }
 
     func handleIncoming() {
@@ -551,6 +668,10 @@ class ShareViewController: UIViewController {
                     self.finishWithMessage("No shareable content found.")
                 } else if anySuccessful {
                     print("[ShareExt] Success (at least one upload worked)")
+                    
+                    // 🆕 SAVE TAGS TO RECENT TAGS
+                    self.saveTagsToConfig()
+                    
                     var msg = "Shared to KashStash!"
                     if let url = kashFilesURL {
                         msg += "\n\(url)"
@@ -577,6 +698,46 @@ class ShareViewController: UIViewController {
         present(alert, animated: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        }
+    }
+}
+// Simple picker helper for tag selection
+class TagPickerHelper: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
+    static let shared = TagPickerHelper()
+    var tags: [String] = []
+    weak var textField: UITextField?
+    
+    func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+    
+    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int {
+        return tags.count + 1 // +1 for "Type custom..." option
+    }
+    
+    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
+        if row == 0 {
+            return "Type custom tags..."
+        }
+        return tags[row - 1]
+    }
+    
+    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
+        guard let tf = textField else { return }
+        
+        if row == 0 {
+            // Let them type
+            return
+        }
+        
+        let selectedTag = tags[row - 1]
+        if let currentText = tf.text, !currentText.isEmpty {
+            // Append to existing
+            let currentTags = Set(currentText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+            if !currentTags.contains(selectedTag) {
+                tf.text = currentText + "," + selectedTag
+            }
+        } else {
+            // First tag
+            tf.text = selectedTag
         }
     }
 }

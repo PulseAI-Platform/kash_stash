@@ -40,6 +40,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C95895E52EB81DEE00E62CE5 /* Exceptions for "Kash Stash" folder in "KashStashShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/RecentTag.swift,
+				Services/RecentTagsManager.swift,
+			);
+			target = C976EDCF2E9CBE02001580C3 /* KashStashShare */;
+		};
 		C976EDDB2E9CBE03001580C3 /* Exceptions for "KashStashShare" folder in "KashStashShare" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -60,6 +68,9 @@
 		};
 		C9E4D8202E9C9E0300EB8308 /* Kash Stash */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C95895E52EB81DEE00E62CE5 /* Exceptions for "Kash Stash" folder in "KashStashShare" target */,
+			);
 			path = "Kash Stash";
 			sourceTree = "<group>";
 		};

@@ -28,13 +28,7 @@ struct KashFilesConfig: Codable, Identifiable, Equatable {
     }
 }
 
-struct RecentTag: Codable, Identifiable, Equatable {
-    let id: UUID = UUID()
-    var value: String
-    var lastUsed: Date
-    
-    static let maxRecentTags = 20
-}
+// REMOVED RecentTag - it's now in the shared RecentTag.swift file
 
 enum UploadDestination: String, Codable, CaseIterable {
     case endpointOnly = "Endpoint Only"
