@@ -55,6 +55,13 @@
 			);
 			target = C976EDCF2E9CBE02001580C3 /* KashStashShare */;
 		};
+		C9BB8F502EB82CB400C888EF /* Exceptions for "Kash Stash" folder in "Kash Stash" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Kash-Stash-Info.plist",
+			);
+			target = C9E4D81D2E9C9E0300EB8308 /* Kash Stash */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -69,6 +76,7 @@
 		C9E4D8202E9C9E0300EB8308 /* Kash Stash */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				C9BB8F502EB82CB400C888EF /* Exceptions for "Kash Stash" folder in "Kash Stash" target */,
 				C95895E52EB81DEE00E62CE5 /* Exceptions for "Kash Stash" folder in "KashStashShare" target */,
 			);
 			path = "Kash Stash";
@@ -440,8 +448,10 @@
 				DEVELOPMENT_TEAM = 7RY66UX752;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Kash-Stash-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Kash Stash";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to scan QR codes that are used to quickly set up the app for sharing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -480,8 +490,10 @@
 				DEVELOPMENT_TEAM = 7RY66UX752;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Kash-Stash-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Kash Stash";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Used to scan QR codes that are used to quickly set up the app for sharing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
