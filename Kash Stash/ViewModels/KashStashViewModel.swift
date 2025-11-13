@@ -10,11 +10,26 @@ class KashStashViewModel: ObservableObject {
         self.selectedUploadDestination = config.defaultUploadDestination
     }
     
-    // Save changes on demand (call this after mutations)
+    // Save changes on demand - PRESERVE POD CONFIGS
     func save() {
         print("[ViewModel] Saving config with \(config.endpoints.count) endpoints and \(config.kashFiles.count) KashFiles")
-        config.defaultUploadDestination = selectedUploadDestination
-        AppConfigStore.save(config)
+        
+        // Load the full current config to preserve pod configurations
+        var fullConfig = AppConfigStore.load()
+        
+        // Update only the fields this ViewModel manages
+        fullConfig.endpoints = config.endpoints
+        fullConfig.lastUsedEndpoint = config.lastUsedEndpoint
+        fullConfig.kashFiles = config.kashFiles
+        fullConfig.lastUsedKashFilesId = config.lastUsedKashFilesId
+        fullConfig.recentTags = config.recentTags
+        fullConfig.defaultUploadDestination = selectedUploadDestination
+        
+        // Save the complete config with pods preserved
+        AppConfigStore.save(fullConfig)
+        
+        // Update our local copy to include any pod changes that might have happened
+        self.config = fullConfig
     }
     
     // Helper to set the current endpoint
@@ -114,7 +129,7 @@ class KashStashViewModel: ObservableObject {
         return destinations
     }
     
-    // Add/edit/delete endpoints (existing code)
+    // Add/edit/delete endpoints
     func addEndpoint(_ ep: KashStashEndpoint) {
         print("[ViewModel] Adding endpoint: \(ep.name)")
         config.endpoints.append(ep)
@@ -137,5 +152,22 @@ class KashStashViewModel: ObservableObject {
             config.lastUsedEndpoint = config.endpoints.first?.id
         }
         save()
+    }
+    
+    // Add method to refresh config (useful after pod changes)
+    func refreshConfig() {
+        self.config = AppConfigStore.load()
+        self.selectedUploadDestination = config.defaultUploadDestination
+    }
+    
+    // Add convenience accessors for pod info (read-only)
+    var podCount: Int {
+        // Always load fresh to get accurate count
+        let fullConfig = AppConfigStore.load()
+        return fullConfig.podConfigs.count
+    }
+    
+    var hasPods: Bool {
+        podCount > 0
     }
 }

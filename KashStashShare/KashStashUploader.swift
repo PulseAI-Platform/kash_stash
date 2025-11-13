@@ -16,16 +16,26 @@ class KashStashUploader {
     
     // MARK: - Private Helpers
     
+    // In KashStashUploader.swift, update the mergedTags function:
+    // In KashStashUploader.swift, update the mergedTags function:
+
     private static func mergedTags(userTags: String, deviceName: String) -> String {
         let userTagsArr = userTags
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        
         let deviceTag = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         var tagsSet = Set(userTagsArr.map { String($0) })
+        
         if !deviceTag.isEmpty {
+            // Add the device tag
             tagsSet.insert(deviceTag)
+            
+            // ADD THIS LINE - Add the from- prefix tag to identify source device
+            tagsSet.insert("from-\(deviceTag)")
         }
+        
         return tagsSet.joined(separator: ",")
     }
     

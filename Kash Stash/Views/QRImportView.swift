@@ -1,3 +1,8 @@
+//
+//  QRImportView.swift
+//  Kash Stash
+//
+
 import SwiftUI
 import PhotosUI
 import Vision
@@ -47,40 +52,141 @@ struct QRImportView: View {
     }
     
     #if os(macOS)
+    var macOSContent: some View {
+        VStack(spacing: 30) {
+            // Header
+            VStack(spacing: 12) {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 60))
+                    .foregroundColor(.blue)
+                
+                Text("Import Configuration")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text("Select a QR code image to import settings")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            .padding(.top, 40)
+            
+            // Action Button
+            Button(action: {
+                selectFileOnMac()
+            }) {
+                HStack {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.title3)
+                    Text("Select QR Code Image")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+            .disabled(isProcessing)
+            .padding(.horizontal, 30)
+            
+            // Processing indicator
+            if isProcessing {
+                ProgressView("Processing QR Code...")
+                    .padding()
+            }
+            
+            Spacer()
+            
+            // Info text
+            VStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.gray)
+                Text("QR codes can import endpoints, Kash Files, or join pods")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal)
+            
+            // Cancel button
+            Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            }
+            .padding()
+        }
+        .alert("Import Configuration?", isPresented: $showImportConfirmation) {
+            Button("Cancel", role: .cancel) {
+                parsedConfig = nil
+                scannedCode = nil
+            }
+            Button("Import") {
+                performImport()
+            }
+        } message: {
+            Text(confirmationMessage)
+        }
+        .alert("Error", isPresented: $showError) {
+            Button("OK") {
+                errorMessage = ""
+            }
+        } message: {
+            Text(errorMessage)
+        }
+        .alert("Success", isPresented: $importedSuccessfully) {
+            Button("OK") {
+                presentationMode.wrappedValue.dismiss()
+            }
+        } message: {
+            Text(importSuccessMessage)
+        }
+    }
+    
     private func selectFileOnMac() {
         guard !isProcessing else { return }
         
+        let panel = NSOpenPanel()
+        panel.title = "Select QR Code Image"
+        panel.message = "Choose an image file containing a QR code"
+        panel.prompt = "Select"
+        panel.allowedContentTypes = [.image, .png, .jpeg, .heic, .tiff, .bmp, .gif]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        
         isProcessing = true
         
-        DispatchQueue.main.async {
-            let panel = NSOpenPanel()
-            panel.title = "Select QR Code Image"
-            panel.allowedContentTypes = [.image]
-            panel.allowsMultipleSelection = false
-            
-            if panel.runModal() == .OK, let url = panel.url {
-                self.handleSelectedFile(url: url)
-            } else {
-                self.isProcessing = false
-            }
-        }
-    }
-
-    private func handleSelectedFile(url: URL) {
-        // Load image in background
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let nsImage = NSImage(contentsOf: url),
-               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                DispatchQueue.main.async {
-                    self.processSelectedImage(cgImage)
+        let response = panel.runModal()
+        
+        if response == .OK, let url = panel.url {
+            // Load and process the image
+            DispatchQueue.global(qos: .userInitiated).async {
+                var cgImage: CGImage?
+                
+                // Try loading with CGImageSource (best for files)
+                if let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+                   let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) {
+                    cgImage = image
                 }
-            } else {
+                // Fallback to NSImage
+                else if let nsImage = NSImage(contentsOf: url) {
+                    cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                }
+                
                 DispatchQueue.main.async {
-                    self.isProcessing = false
-                    self.errorMessage = "Failed to load image"
-                    self.showError = true
+                    if let image = cgImage {
+                        self.processSelectedImage(image)
+                    } else {
+                        self.isProcessing = false
+                        self.errorMessage = "Failed to load image file"
+                        self.showError = true
+                    }
                 }
             }
+        } else {
+            // User cancelled
+            isProcessing = false
         }
     }
     #endif
@@ -98,7 +204,7 @@ struct QRImportView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("Scan or select a QR code to import endpoint or Kash Files settings")
+                Text("Scan or select a QR code to import settings")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -172,7 +278,7 @@ struct QRImportView: View {
             VStack(spacing: 8) {
                 Image(systemName: "info.circle")
                     .foregroundColor(.gray)
-                Text("QR codes can be generated from the web portal or shared by other users")
+                Text("QR codes can import endpoints, Kash Files, or join pods")
                     .font(.caption)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
@@ -216,79 +322,11 @@ struct QRImportView: View {
                 presentationMode.wrappedValue.dismiss()
             }
         } message: {
-            Text("Configuration imported successfully!")
-        }
-    }
-    #endif
-    
-    private var confirmationMessage: String {
-        guard let config = parsedConfig else { return "" }
-        
-        switch config {
-        case .endpoint(let ep):
-            return "Import endpoint '\(ep.name)' for node '\(ep.nodeName)'?"
-        case .kashFiles(let kf):
-            return "Import Kash Files instance '\(kf.name)'?"
-        case .unknown(_):
-            return "Import this configuration?"
-        case .invalid:
-            return ""
+            Text(importSuccessMessage)
         }
     }
     
-    #if os(macOS)
-    private func selectFileOnMac() {
-        // Prevent multiple file dialogs
-        guard !isProcessing else { return }
-        
-        // FIX: Don't wrap runModal in DispatchQueue.main.async - it's already on main thread
-        let panel = NSOpenPanel()
-        panel.title = "Select QR Code Image"
-        panel.message = "Choose an image file containing a QR code"
-        panel.prompt = "Select"
-        panel.allowedContentTypes = [.image, .png, .jpeg, .heic, .tiff, .bmp, .gif]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        
-        // Set processing state BEFORE showing dialog
-        isProcessing = true
-        
-        let response = panel.runModal()
-        
-        if response == .OK, let url = panel.url {
-            // Load and process the image
-            DispatchQueue.global(qos: .userInitiated).async {
-                var cgImage: CGImage?
-                
-                // Try loading with CGImageSource (best for files)
-                if let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-                   let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) {
-                    cgImage = image
-                }
-                // Fallback to NSImage
-                else if let nsImage = NSImage(contentsOf: url) {
-                    cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-                }
-                
-                DispatchQueue.main.async {
-                    if let image = cgImage {
-                        self.processSelectedImage(image)
-                    } else {
-                        self.isProcessing = false
-                        self.errorMessage = "Failed to load image file"
-                        self.showError = true
-                    }
-                }
-            }
-        } else {
-            // User cancelled
-            isProcessing = false
-        }
-    }
-    #endif
-    
-    #if os(iOS) && !targetEnvironment(macCatalyst)
+    #if !targetEnvironment(macCatalyst)
     private func checkCameraPermissionAndScan() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -310,15 +348,46 @@ struct QRImportView: View {
         }
     }
     #endif
+    #endif
+    
+    private var confirmationMessage: String {
+        guard let config = parsedConfig else { return "" }
+        
+        switch config {
+        case .endpoint(let ep):
+            return "Import endpoint '\(ep.name)' for node '\(ep.nodeName)'?"
+        case .kashFiles(let kf):
+            return "Import Kash Files instance '\(kf.name)'?"
+        case .pod(let pod):
+            return "Join pod '\(pod.name)'?"
+        case .unknown(_):
+            return "Import this configuration?"
+        case .invalid:
+            return ""
+        }
+    }
+    
+    private var importSuccessMessage: String {
+        guard let config = parsedConfig else { return "Configuration imported successfully!" }
+        
+        switch config {
+        case .endpoint(_):
+            return "Endpoint imported successfully!"
+        case .kashFiles(_):
+            return "Kash Files configuration imported successfully!"
+        case .pod(let pod):
+            return "Successfully joined pod '\(pod.name)'!"
+        default:
+            return "Configuration imported successfully!"
+        }
+    }
     
     private func processSelectedImage(_ image: CGImage) {
-        // FIX: Ensure we're on main thread for state updates
         DispatchQueue.main.async {
             self.isProcessing = true
         }
         
         QRCodeScanner.detectQRCodeWithEnhancements(from: image) { code in
-            // FIX: Ensure all state updates happen on main thread
             DispatchQueue.main.async {
                 self.isProcessing = false
                 
@@ -337,7 +406,7 @@ struct QRImportView: View {
         parsedConfig = QRCodeScanner.parseQRConfig(code)
         
         switch parsedConfig {
-        case .endpoint(_), .kashFiles(_):
+        case .endpoint(_), .kashFiles(_), .pod(_):
             showImportConfirmation = true
         case .unknown(_):
             errorMessage = "QR code contains unrecognized configuration format"
@@ -376,6 +445,36 @@ struct QRImportView: View {
                 importedSuccessfully = true
             }
             
+        case .pod(let pod):
+            // Check for duplicate pods
+            let existingPods = AppConfigStore.load().podConfigs
+            if existingPods.contains(where: {
+                $0.entranceNodeUrl == pod.entranceNodeUrl && $0.presharedKey == pod.presharedKey
+            }) {
+                errorMessage = "This pod is already configured"
+                showError = true
+            } else {
+                AppConfigStore.addPodConfig(pod)
+                
+                // Auto-refresh to discover nodes
+                Task {
+                    do {
+                        let podClient = PodClient()
+                        let nodes = try await podClient.discoverNodes(pod: pod)
+                        let allTags = Set(nodes.flatMap { $0.advertisedTags })
+                        AppConfigStore.refreshPodCache(
+                            podId: pod.id,
+                            nodes: nodes,
+                            tags: Array(allTags)
+                        )
+                    } catch {
+                        print("Failed to refresh pod after import: \(error)")
+                    }
+                }
+                
+                importedSuccessfully = true
+            }
+            
         default:
             break
         }
@@ -383,25 +482,23 @@ struct QRImportView: View {
     
     #if DEBUG
     private func showManualInput() {
-        let testEndpoint = """
+        // Test pod QR
+        let testPod = """
         {
-            "name": "Test Endpoint",
-            "device": "Test Device",
-            "probeKey": "test-key-123",
-            "nodeName": "test-node",
-            "probeId": "test-probe-id",
-            "keepScreenshots": false
+            "type": "pod",
+            "name": "Test Pod",
+            "entrance_url": "https://example.com",
+            "key": "test-preshared-key-123"
         }
         """
-        processScannedCode(testEndpoint)
+        processScannedCode(testPod)
     }
     #endif
 }
 
-// MARK: - Photo Library Picker (iOS only) - Keep as is
+// MARK: - Photo Library Picker (iOS only)
 #if os(iOS)
 struct PhotoLibraryPicker: UIViewControllerRepresentable {
-    // ... keep existing implementation unchanged
     let completion: (CGImage) -> Void
     
     func makeUIViewController(context: Context) -> PHPickerViewController {
@@ -444,10 +541,9 @@ struct PhotoLibraryPicker: UIViewControllerRepresentable {
     }
 }
 
-// Camera scanner implementation remains unchanged...
+// Camera scanner implementation
 #if !targetEnvironment(macCatalyst)
 struct QRCodeScannerView: UIViewControllerRepresentable {
-    // ... keep existing implementation
     let completion: (String) -> Void
     
     func makeUIViewController(context: Context) -> QRScannerViewController {
@@ -458,7 +554,6 @@ struct QRCodeScannerView: UIViewControllerRepresentable {
 }
 
 class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
-    // ... keep all existing implementation
     var captureSession: AVCaptureSession!
     var previewLayer: AVCaptureVideoPreviewLayer!
     let completion: (String) -> Void
@@ -519,7 +614,6 @@ class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsD
     }
     
     func addScanningOverlay() {
-        // ... keep existing implementation
         let overlay = UIView(frame: view.bounds)
         overlay.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         overlay.isUserInteractionEnabled = false
@@ -544,7 +638,6 @@ class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsD
         let cornerWidth: CGFloat = 4
         let cornerColor = UIColor.systemBlue
         
-        // All corners...
         let topLeft = UIView(frame: CGRect(x: scanRect.minX, y: scanRect.minY, width: cornerLength, height: cornerWidth))
         topLeft.backgroundColor = cornerColor
         view.addSubview(topLeft)

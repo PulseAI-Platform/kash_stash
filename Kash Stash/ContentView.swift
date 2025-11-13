@@ -8,9 +8,11 @@ extension View {
     }
 }
 #endif
+
 struct ContentView: View {
     @StateObject var viewModel = KashStashViewModel()
     @State private var showQRImport = false
+    @State private var podConfigs: [PodConfig] = []
 
     var body: some View {
         NavigationView {
@@ -145,6 +147,38 @@ struct ContentView: View {
                                 .cornerRadius(12)
                             }
                             
+                            // Pods info - NEW SECTION
+                            if !podConfigs.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                                            .foregroundColor(.purple)
+                                        Text("Pods")
+                                            .font(.headline)
+                                            .foregroundColor(.secondary)
+                                        
+                                        Spacer()
+                                        
+                                        Text("\(podConfigs.filter { $0.isActive }.count) ACTIVE")
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.purple)
+                                            .foregroundColor(.white)
+                                            .cornerRadius(4)
+                                    }
+                                    
+                                    Text("\(podConfigs.count) pod\(podConfigs.count == 1 ? "" : "s") configured")
+                                        .font(.body)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
+                            }
+                            
                             // Current upload destination indicator
                             HStack {
                                 Image(systemName: "arrow.up.circle")
@@ -247,6 +281,40 @@ struct ContentView: View {
                             .cornerRadius(10)
                         }
                         .accessibilityHint("Manage Kash Files cloud storage")
+                        
+                        // NEW - Pods Management Button
+                        NavigationLink(destination: PodsListView()) {
+                            HStack {
+                                Image(systemName: "bubble.left.and.bubble.right.fill")
+                                    .font(.title3)
+                                Text("Manage Pods")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                                
+                                if !podConfigs.isEmpty {
+                                    Spacer()
+                                    Text("\(podConfigs.count)")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(Color.purple)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(10)
+                                }
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.black)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 1.5)
+                            )
+                            .cornerRadius(10)
+                        }
+                        .accessibilityHint("Manage distributed social pods")
                     }
 
                     // 4. External link buttons
@@ -339,6 +407,10 @@ struct ContentView: View {
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showQRImport) {
             QRImportView(viewModel: viewModel)
+        }
+        .onAppear {
+            // Load pod configs
+            podConfigs = AppConfigStore.load().podConfigs
         }
     }
     

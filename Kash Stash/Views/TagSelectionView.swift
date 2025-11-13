@@ -1,5 +1,7 @@
 import SwiftUI
 
+// In TagSelectionView.swift, replace the TagChip with a simpler version:
+
 struct TagSelectionView: View {
     @ObservedObject var viewModel: KashStashViewModel
     @Binding var selectedTags: String
@@ -29,7 +31,7 @@ struct TagSelectionView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
                             ForEach(currentTagsArray, id: \.self) { tag in
-                                TagChip(tag: tag) {
+                                SimpleTagChip(tag: tag) {
                                     removeTag(tag)
                                 }
                             }
@@ -98,23 +100,26 @@ struct TagSelectionView: View {
     }
 }
 
-struct TagChip: View {
+// Simple tag chip for TagSelectionView
+struct SimpleTagChip: View {
     let tag: String
     let onRemove: () -> Void
     
     var body: some View {
         HStack(spacing: 4) {
-            Text(tag)
+            Text("#\(tag)")
                 .font(.caption)
+            
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.caption)
+                    .foregroundColor(.gray)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.blue)
-        .foregroundColor(.white)
-        .cornerRadius(12)
+        .background(Color.purple.opacity(0.2))
+        .foregroundColor(.purple)
+        .cornerRadius(8)
     }
 }

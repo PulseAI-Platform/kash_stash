@@ -55,13 +55,6 @@
 			);
 			target = C976EDCF2E9CBE02001580C3 /* KashStashShare */;
 		};
-		C9BB8F502EB82CB400C888EF /* Exceptions for "Kash Stash" folder in "Kash Stash" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				"Kash-Stash-Info.plist",
-			);
-			target = C9E4D81D2E9C9E0300EB8308 /* Kash Stash */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -76,7 +69,6 @@
 		C9E4D8202E9C9E0300EB8308 /* Kash Stash */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				C9BB8F502EB82CB400C888EF /* Exceptions for "Kash Stash" folder in "Kash Stash" target */,
 				C95895E52EB81DEE00E62CE5 /* Exceptions for "Kash Stash" folder in "KashStashShare" target */,
 			);
 			path = "Kash Stash";

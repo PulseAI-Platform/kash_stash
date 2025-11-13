@@ -16,16 +16,26 @@ class KashStashUploader {
     
     // MARK: - Private Helpers
     
+    // In KashStashUploader.swift, update the mergedTags function:
+    // In KashStashUploader.swift, update the mergedTags function:
+
     private static func mergedTags(userTags: String, deviceName: String) -> String {
         let userTagsArr = userTags
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        
         let deviceTag = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         var tagsSet = Set(userTagsArr.map { String($0) })
+        
         if !deviceTag.isEmpty {
+            // Add the device tag
             tagsSet.insert(deviceTag)
+            
+            // ADD THIS LINE - Add the from- prefix tag to identify source device
+            tagsSet.insert("from-\(deviceTag)")
         }
+        
         return tagsSet.joined(separator: ",")
     }
     
@@ -164,6 +174,16 @@ class KashStashUploader {
                 uploadPhoto(data: data, tags: tags, context: context, endpoint: endpoint) { success in
                     completion(success, nil)
                 }
+            } else if mimeType == "text/plain" {
+                // TEXT: Get the actual text and combine with caption
+                let sharedText = String(data: data, encoding: .utf8) ?? ""
+                var finalText = sharedText
+                if !context.isEmpty {
+                    finalText += "\n\n\(context)"
+                }
+                uploadTextNote(text: finalText, tags: tags, endpoint: endpoint) { success in
+                    completion(success, nil)
+                }
             } else {
                 uploadFile(data: data, filename: filename, mimeType: mimeType, tags: tags, endpoint: endpoint) { success in
                     completion(success, nil)
@@ -184,33 +204,17 @@ class KashStashUploader {
                 case .success(let response):
                     print("[Upload] Kash Files upload successful")
                     
-                    // Build the full download URL from the response
                     var downloadURL: String
                     if let download = response.download {
-                        // Use the download path from response
                         downloadURL = "\(kashFiles.baseURL)\(download)"
                     } else if let location = response.location {
-                        // Fallback to location
                         downloadURL = "\(kashFiles.baseURL)/api/files/\(location)"
                     } else {
-                        // Last resort
                         downloadURL = "\(kashFiles.baseURL)/files/\(filename)"
                     }
                     
                     print("[Upload] Download URL: \(downloadURL)")
-                    
-                    // If we have an endpoint, create a link digest
-                    if let endpoint = endpoint {
-                        let linkNote = "📎 File uploaded to Kash Files: \(response.filename ?? filename)\n\nAccess URL: \(downloadURL)"
-                        let linkTags = "\(tags),kash-files-link,\(filename)"
-                        
-                        uploadTextNote(text: linkNote, tags: linkTags, endpoint: endpoint) { success in
-                            print("[Upload] Link digest creation: \(success ? "success" : "failed")")
-                            completion(true, downloadURL)
-                        }
-                    } else {
-                        completion(true, downloadURL)
-                    }
+                    completion(true, downloadURL)
                 case .failure(let error):
                     print("[Upload] Kash Files upload failed: \(error)")
                     completion(false, error.localizedDescription)
@@ -231,7 +235,6 @@ class KashStashUploader {
                 case .success(let response):
                     print("[Upload] Kash Files upload successful in BOTH mode")
                     
-                    // Build the full download URL from the response
                     var downloadURL: String
                     if let download = response.download {
                         downloadURL = "\(kashFiles.baseURL)\(download)"
@@ -242,11 +245,27 @@ class KashStashUploader {
                     }
                     
                     if mimeType.hasPrefix("image/") {
-                        // IMAGES: Two separate digests (existing behavior)
-                        uploadPhoto(data: data, tags: "\(tags),\(filename)", context: context, endpoint: endpoint) { photoSuccess in
+                        // Extract caption from context if present
+                        var actualContext = context
+                        var userCaption = ""
+                        
+                        if context.contains("|||CAPTION_SEP|||") {
+                            let parts = context.components(separatedBy: "|||CAPTION_SEP|||")
+                            if parts.count == 2 {
+                                userCaption = parts[0]
+                                actualContext = parts[1]
+                            }
+                        }
+                        
+                        // Upload photo with AI context
+                        uploadPhoto(data: data, tags: "\(tags),\(filename)", context: actualContext, endpoint: endpoint) { photoSuccess in
                             if photoSuccess {
-                                print("[Upload] Image digest created successfully")
-                                let linkNote = "🖼️ Image in Kash Files: \(response.filename ?? filename)\n\nDirect URL: \(downloadURL)"
+                                // Build link note with user caption if provided
+                                var linkNote = ""
+                                if !userCaption.isEmpty {
+                                    linkNote = userCaption + "\n\n"
+                                }
+                                linkNote += "🖼️ Image in Kash Files: \(response.filename ?? filename)\n\nDirect URL: \(downloadURL)"
                                 let linkTags = "\(tags),kash-files-link,image-link,\(filename)"
                                 
                                 uploadTextNote(text: linkNote, tags: linkTags, endpoint: endpoint) { linkSuccess in
@@ -259,26 +278,27 @@ class KashStashUploader {
                             }
                         }
                     } else if mimeType == "text/plain" {
-                        // TEXT NOTES: Single digest with user content + link
-                        // Get the original text content
+                        // TEXT: Single digest with original text + file link + caption
                         let originalText = String(data: data, encoding: .utf8) ?? ""
                         
-                        // Create a combined note with user's text and the file link
-                        let combinedNote = """
-                        \(originalText)
+                        var digestContent = originalText
+                        digestContent += "\n\n📄 File: \(response.filename ?? filename)"
+                        digestContent += "\n🔗 URL: \(downloadURL)"
                         
-                        File: \(response.filename ?? filename)
-                        Link: \(downloadURL)
-                        """
+                        if !context.isEmpty {
+                            digestContent += "\n\n\(context)"
+                        }
                         
-                        // Upload as a single digest with the combined content
-                        uploadTextNote(text: combinedNote, tags: tags, endpoint: endpoint) { success in
+                        uploadTextNote(text: digestContent, tags: tags, endpoint: endpoint) { success in
                             print("[Upload] Combined note+link digest creation: \(success ? "success" : "failed")")
                             completion(success, downloadURL)
                         }
                     } else {
-                        // OTHER FILES: Just create link digest
-                        let linkNote = "📎 File in Kash Files: \(response.filename ?? filename)\n\nAccess URL: \(downloadURL)"
+                        // OTHER FILES: Link digest with caption
+                        var linkNote = "📎 File in Kash Files: \(response.filename ?? filename)\n\nAccess URL: \(downloadURL)"
+                        if !context.isEmpty {
+                            linkNote += "\n\n\(context)"
+                        }
                         let linkTags = "\(tags),kash-files-link,\(filename)"
                         
                         uploadTextNote(text: linkNote, tags: linkTags, endpoint: endpoint) { linkSuccess in

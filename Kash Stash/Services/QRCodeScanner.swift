@@ -1,3 +1,8 @@
+//
+//  QRCodeScanner.swift
+//  Kash Stash
+//
+
 import Foundation
 import Vision
 import CoreImage
@@ -12,6 +17,7 @@ class QRCodeScanner {
     enum QRConfigType {
         case endpoint(KashStashEndpoint)
         case kashFiles(KashFilesConfig)
+        case pod(PodConfig)
         case unknown(String)
         case invalid
     }
@@ -118,6 +124,7 @@ class QRCodeScanner {
         
         return result
     }
+    
     private static func convertToHighContrastBW(_ image: CIImage) -> CIImage? {
         // Convert to grayscale first
         guard let noirFilter = CIFilter(name: "CIPhotoEffectNoir") else { return nil }
@@ -162,7 +169,7 @@ class QRCodeScanner {
     }
     #endif
     
-    // MARK: - Config Parsing (keep existing implementation)
+    // MARK: - Config Parsing (updated with better Pod support)
     
     static func parseQRConfig(_ jsonString: String) -> QRConfigType {
         let cleanedString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -171,7 +178,42 @@ class QRCodeScanner {
             return .invalid
         }
         
-        // Try to parse as endpoint
+        // Try to parse as JSON dictionary first
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Check if it's explicitly a pod (with type field)
+                if let type = json["type"] as? String, type == "pod" {
+                    if let pod = parsePodConfig(json) {
+                        return .pod(pod)
+                    }
+                }
+                
+                // Check if it looks like a pod (has preshared_key or entrance_url)
+                if json["preshared_key"] != nil || json["entrance_url"] != nil {
+                    if let pod = parsePodConfig(json) {
+                        return .pod(pod)
+                    }
+                }
+                
+                // Check for endpoint markers
+                if json["probeKey"] != nil || json["probe_key"] != nil {
+                    if let endpoint = parseAndroidEndpoint(json) {
+                        return .endpoint(endpoint)
+                    }
+                }
+                
+                // Check for KashFiles markers (has url and key but NOT entrance_url)
+                if json["url"] != nil && json["key"] != nil && json["entrance_url"] == nil {
+                    if let kashFiles = parseAndroidKashFiles(json) {
+                        return .kashFiles(kashFiles)
+                    }
+                }
+            }
+        } catch {
+            print("Failed to parse as JSON: \(error)")
+        }
+        
+        // Try to parse as direct endpoint object
         do {
             let endpoint = try JSONDecoder().decode(KashStashEndpoint.self, from: data)
             return .endpoint(endpoint)
@@ -187,26 +229,36 @@ class QRCodeScanner {
             print("Failed to decode as KashFiles: \(error)")
         }
         
-        // Try Android format
-        do {
-            if let androidConfig = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if androidConfig["probeKey"] != nil || androidConfig["probe_key"] != nil {
-                    if let endpoint = parseAndroidEndpoint(androidConfig) {
-                        return .endpoint(endpoint)
-                    }
-                }
-                
-                if androidConfig["url"] != nil && androidConfig["key"] != nil {
-                    if let kashFiles = parseAndroidKashFiles(androidConfig) {
-                        return .kashFiles(kashFiles)
-                    }
-                }
-            }
-        } catch {
-            print("Failed to parse as JSON: \(error)")
+        return .unknown(cleanedString)
+    }
+    
+    private static func parsePodConfig(_ dict: [String: Any]) -> PodConfig? {
+        // Handle both formats - the one we expected and the actual format
+        guard let name = dict["name"] as? String,
+              let entranceUrl = dict["entrance_url"] as? String else {
+            return nil
         }
         
-        return .unknown(cleanedString)
+        // Try both "key" and "preshared_key" fields
+        guard let key = (dict["key"] as? String) ?? (dict["preshared_key"] as? String) else {
+            return nil
+        }
+        
+        // Get tags if available
+        let tags = dict["tags"] as? [String] ?? []
+        
+        var config = PodConfig(
+            name: name,
+            entranceNodeUrl: entranceUrl,
+            presharedKey: key
+        )
+        
+        // If tags were provided, set them as cached tags
+        if !tags.isEmpty {
+            config.cachedTags = tags
+        }
+        
+        return config
     }
     
     private static func parseAndroidEndpoint(_ dict: [String: Any]) -> KashStashEndpoint? {
