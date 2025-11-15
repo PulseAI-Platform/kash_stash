@@ -392,7 +392,7 @@ struct ReplyPostView: View {
         
         // Use the original sender's device name if available
         let targetDevice = originalSenderDevice ?? "unknown"
-        let replyRef = "@\(cleanPodName).\(nodeName).xyzpulseinfra.com.\(replyingTo.id).\(targetDevice)"
+        let replyRef = "@\(cleanPodName).probes-\(nodeName).xyzpulseinfra.com.\(replyingTo.id).\(targetDevice)"
         var fullReplyText = "\(replyRef) \(replyText)"
         
         // Handle attachment if present
