@@ -90,25 +90,28 @@ struct PodFeedView: View {
     var filteredAndSortedDigests: [Digest] {
         var filtered = digests
         
-        // FILTER OUT REPLIES - only show top-level posts
-        filtered = filtered.filter { digest in
-            // Check if it has a repliesTo field set
-            if digest.repliesTo != nil {
-                return false
+        // First, separate root posts from replies
+        let replies = filtered.filter { $0.repliesTo != nil }
+        let rootPosts = filtered.filter { $0.repliesTo == nil }
+        
+        // Build a dictionary of replies by parent ID
+        var repliesByParent: [String: [Digest]] = [:]
+        for reply in replies {
+            if let parentId = reply.repliesTo {
+                if repliesByParent[parentId] == nil {
+                    repliesByParent[parentId] = []
+                }
+                repliesByParent[parentId]?.append(reply)
             }
-            
-            // Check if content starts with @ mention (reply format)
-            if digest.content.hasPrefix("@") && digest.content.contains(".") {
-                return false
-            }
-            
-            // Check for reply tag
-            if digest.tags.contains("reply") {
-                return false
-            }
-            
-            return true
         }
+        
+        // Sort each reply thread by date
+        for (parentId, _) in repliesByParent {
+            repliesByParent[parentId]?.sort { $0.createdAt < $1.createdAt }
+        }
+        
+        // Start with root posts only
+        filtered = rootPosts
         
         // Filter by selected tags
         if !selectedTags.isEmpty {
@@ -126,27 +129,39 @@ struct PodFeedView: View {
             }
         }
         
-        // Apply sorting
+        // Apply sorting to root posts
         switch sortOption {
         case .newestFirst:
             filtered.sort { $0.createdAt > $1.createdAt }
         case .oldestFirst:
             filtered.sort { $0.createdAt < $1.createdAt }
         case .mostReplies:
-            let replyCount = { (digest: Digest) -> Int in
-                digests.filter { $0.repliesTo == digest.id }.count
+            filtered.sort {
+                let count1 = repliesByParent[$0.id]?.count ?? 0
+                let count2 = repliesByParent[$1.id]?.count ?? 0
+                return count1 > count2
             }
-            filtered.sort { replyCount($0) > replyCount($1) }
         case .recentlyActive:
-            let latestActivity = { (digest: Digest) -> Date in
-                let replies = digests.filter { $0.repliesTo == digest.id }
-                let latestReplyDate = replies.map { $0.createdAt }.max() ?? digest.createdAt
-                return max(digest.createdAt, latestReplyDate)
+            filtered.sort {
+                let replies1 = repliesByParent[$0.id] ?? []
+                let replies2 = repliesByParent[$1.id] ?? []
+                let latest1 = replies1.map { $0.createdAt }.max() ?? $0.createdAt
+                let latest2 = replies2.map { $0.createdAt }.max() ?? $1.createdAt
+                return latest1 > latest2
             }
-            filtered.sort { latestActivity($0) > latestActivity($1) }
         }
         
-        return filtered
+        // Now build the final list with threads
+        var threadedDigests: [Digest] = []
+        for rootPost in filtered {
+            threadedDigests.append(rootPost)
+            // Add replies right after their parent (you could show these indented in the UI)
+            if let replies = repliesByParent[rootPost.id] {
+                threadedDigests.append(contentsOf: replies)
+            }
+        }
+        
+        return threadedDigests
     }
     
     var body: some View {
@@ -366,10 +381,10 @@ struct PodFeedView: View {
         .padding(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
         
         let filteredTags = tagSearchText.isEmpty
-            ? availableTags
-            : availableTags.filter {
-                $0.localizedCaseInsensitiveContains(tagSearchText)
-            }
+        ? availableTags
+        : availableTags.filter {
+            $0.localizedCaseInsensitiveContains(tagSearchText)
+        }
         
         if filteredTags.isEmpty && !tagSearchText.isEmpty {
             HStack {
@@ -631,9 +646,11 @@ struct PodFeedView: View {
         
         do {
             let podClient = PodClient()
-            var allDigests: [Digest] = []
             var discoveredTagsSet = Set<String>()
+            let digestsLock = NSLock()
+            var allDigestsDict = [String: Digest]()
             
+            // Get date range
             let dateRange: (start: Date?, end: Date?)
             if dateRangeOption == .custom {
                 dateRange = (customStartDate, customEndDate)
@@ -641,6 +658,7 @@ struct PodFeedView: View {
                 dateRange = dateRangeOption.dateRange
             }
             
+            // Get nodes to query
             let nodesToQuery: [PodNode]
             if pod.discoveredNodes.isEmpty {
                 do {
@@ -666,174 +684,90 @@ struct PodFeedView: View {
                 nodesToQuery = pod.discoveredNodes
             }
             
-            for node in nodesToQuery {
-                do {
+            // PARALLEL FETCH: Create tasks for all tag/node combinations
+            await withTaskGroup(of: [Digest].self) { group in
+                for node in nodesToQuery {
+                    // Determine tags to fetch - NO FILTERING, get everything the pod advertises
                     let tagsToFetch: [String]
                     if !selectedTags.isEmpty {
+                        // User has manually selected tags to filter by
                         tagsToFetch = Array(selectedTags)
                     } else if !pod.cachedTags.isEmpty {
+                        // Get ALL pod tags, not filtered
                         tagsToFetch = pod.cachedTags
                     } else if !node.advertisedTags.isEmpty {
+                        // Fall back to node's advertised tags
                         tagsToFetch = node.advertisedTags
                     } else {
-                        tagsToFetch = ["*"]
+                        continue
                     }
                     
-                    print("[PodFeedView] Fetching from \(node.name) with tags: \(tagsToFetch)")
+                    print("[PodFeedView] Starting parallel fetch from \(node.name) for \(tagsToFetch.count) tags")
                     
-                    var currentPage = 1
-                    var hasMorePages = true
-                    
-                    while hasMorePages {
-                        let response = try await podClient.fetchDigests(
-                            from: node,
-                            tags: tagsToFetch,
-                            podKey: pod.presharedKey,
-                            page: currentPage,
-                            perPage: 100,
-                            startDate: dateRange.start,
-                            endDate: dateRange.end
-                        )
-                        if let firstEntry = response.feedentries.first {
-                            print("  ID: \(firstEntry.id)")
-                            print("  Created At: \(firstEntry.createdAt ?? "nil")")
-                            print("  Title: \(firstEntry.title ?? "nil")")
-                        }
-                        let digestsFromPage = response.feedentries.compactMap { entry -> Digest? in
-                            var createdDate = Date()
-                            
-                            print("[Date Debug] Entry ID: \(entry.id)")
-                            print("[Date Debug] Raw createdAt from API: \(entry.createdAt ?? "NIL")")
-                            
-                            if let dateString = entry.createdAt {
-                                // First, let's see if the string is empty or weird
-                                if dateString.isEmpty {
-                                    print("[Date Debug] ERROR: Date string is empty!")
-                                    createdDate = Date()
-                                } else {
-                                    let isoFormatter = ISO8601DateFormatter()
-                                    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                                    
-                                    if let parsedDate = isoFormatter.date(from: dateString) {
-                                        createdDate = parsedDate
-                                        print("[Date Debug] ✓ Successfully parsed: \(dateString) -> \(createdDate)")
-                                    } else {
-                                        // Try without fractional seconds
-                                        isoFormatter.formatOptions = [.withInternetDateTime]
-                                        if let parsedDate = isoFormatter.date(from: dateString) {
-                                            createdDate = parsedDate
-                                            print("[Date Debug] ✓ Successfully parsed (no fractions): \(dateString) -> \(createdDate)")
-                                        } else {
-                                            // Try manual parsing
-                                            let formatter = DateFormatter()
-                                            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
-                                            formatter.locale = Locale(identifier: "en_US_POSIX")
-                                            formatter.timeZone = TimeZone(secondsFromGMT: 0)
-                                            
-                                            if let parsedDate = formatter.date(from: dateString) {
-                                                createdDate = parsedDate
-                                                print("[Date Debug] ✓ Successfully parsed with manual formatter: \(dateString) -> \(createdDate)")
-                                            } else {
-                                                print("[Date Debug] ✗ FAILED to parse date, using current date as fallback")
-                                                print("[Date Debug]   Problematic string: '\(dateString)'")
-                                                createdDate = Date()
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                print("[Date Debug] ✗ createdAt is nil from API!")
-                            }
-                            
-                            print("[Date Debug] Final date being used: \(createdDate)")
-                            print("[Date Debug] ---")
-                            
-                            let tagNames = entry.tags?.map { $0.name } ?? []
-                            discoveredTagsSet.formUnion(tagNames)
-                            
-                            // Parse replies
-                            var repliesTo: String? = nil
-                            if let content = entry.content {
-                                if content.contains("@reply:") {
-                                    if let range = content.range(of: "@reply:") {
-                                        let afterReply = content[range.upperBound...]
-                                        if let spaceIndex = afterReply.firstIndex(of: " ") {
-                                            repliesTo = String(afterReply[..<spaceIndex])
-                                        } else {
-                                            repliesTo = String(afterReply)
-                                        }
-                                    }
-                                } else if content.hasPrefix("@") {
-                                    if let spaceIndex = content.firstIndex(of: " ") {
-                                        let mention = content[content.index(after: content.startIndex)..<spaceIndex]
-                                        let parts = mention.split(separator: ".")
-                                        
-                                        if parts.count >= 5 {
-                                            let digestIdIndex = parts.count - 2
-                                            let potentialDigestId = String(parts[digestIdIndex])
-                                            if !potentialDigestId.isEmpty {
-                                                repliesTo = potentialDigestId
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            return Digest(
-                                id: String(entry.id),
-                                title: entry.title?.isEmpty == false ? entry.title! : "",
-                                content: entry.content ?? "",
-                                tags: tagNames,
-                                sourceNode: node.name,
-                                createdAt: createdDate,
-                                inPods: [pod.name],
-                                isMyPost: false,
-                                isReplyToMe: false,
-                                repliesTo: repliesTo
+                    // Create a task for each tag
+                    for tag in tagsToFetch {
+                        group.addTask {
+                            await fetchDigestsForTag(
+                                tag: tag,
+                                from: node,
+                                podClient: podClient,
+                                podKey: pod.presharedKey,
+                                podName: pod.name,
+                                dateRange: dateRange
                             )
                         }
-                        
-                        allDigests.append(contentsOf: digestsFromPage)
-                        hasMorePages = currentPage < response.pages
-                        currentPage += 1
                     }
-                } catch {
-                    print("Failed to fetch from node \(node.name): \(error)")
+                }
+                
+                // Collect results from all parallel tasks
+                for await digestBatch in group {
+                    digestsLock.lock()
+                    
+                    // Add ALL digests to dictionary (no filtering!)
+                    for digest in digestBatch {
+                        // Collect all tags
+                        discoveredTagsSet.formUnion(digest.tags)
+                        
+                        // Merge digest if it already exists
+                        if var existing = allDigestsDict[digest.id] {
+                            var podSet = existing.inPodsSet
+                            podSet.formUnion(digest.inPodsSet)
+                            existing.inPods = Array(podSet)
+                            allDigestsDict[digest.id] = existing
+                        } else {
+                            allDigestsDict[digest.id] = digest
+                        }
+                    }
+                    
+                    digestsLock.unlock()
                 }
             }
             
+            // Update discovered tags
             if !discoveredTagsSet.isEmpty {
                 AppConfigStore.updateDiscoveredTags(podId: pod.id, tags: Array(discoveredTagsSet))
             }
             
-            var digestDict: [String: Digest] = [:]
-            for digest in allDigests {
-                if var existing = digestDict[digest.id] {
-                    var podSet = existing.inPodsSet
-                    podSet.formUnion(digest.inPodsSet)
-                    existing.inPods = Array(podSet)
-                    digestDict[digest.id] = existing
-                } else {
-                    digestDict[digest.id] = digest
-                }
-            }
+            // IMPORTANT: Sort the digests by creation date!
+            let sortedDigests = Array(allDigestsDict.values).sorted { $0.createdAt > $1.createdAt }
             
             await MainActor.run {
-                self.digests = Array(digestDict.values)
+                self.digests = sortedDigests // Use sorted array
                 self.allDiscoveredTags = Array(discoveredTagsSet)
                 self.isLoading = false
                 
+                // Check for new replies
                 let config = AppConfigStore.load()
                 if let endpoint = config.endpoints.first {
-                    NotificationManager.shared.checkForNewContent(
+                    NotificationManager.shared.checkForNewReplies(
                         in: self.digests,
-                        for: pod,
-                        deviceName: endpoint.device
+                        deviceName: endpoint.device,
+                        nodeName: endpoint.nodeName
                     )
                 }
             }
             
-            print("[PodFeedView] Total digests loaded: \(digests.count)")
+            print("[PodFeedView] Total unique digests loaded: \(digests.count) (newest: \(sortedDigests.first?.createdAt ?? Date()))")
             
         } catch {
             await MainActor.run {
@@ -842,6 +776,115 @@ struct PodFeedView: View {
                 self.isLoading = false
             }
         }
+    }
+    
+    // Helper function to fetch all pages for a single tag
+    private func fetchDigestsForTag(
+        tag: String,
+        from node: PodNode,
+        podClient: PodClient,
+        podKey: String,
+        podName: String,
+        dateRange: (start: Date?, end: Date?)
+    ) async -> [Digest] {
+        var tagDigests: [Digest] = []
+        var currentPage = 1
+        var hasMorePages = true
+        
+        while hasMorePages {
+            do {
+                let response = try await podClient.fetchDigests(
+                    from: node,
+                    tags: [tag],
+                    podKey: podKey,
+                    page: currentPage,
+                    perPage: 100,
+                    startDate: dateRange.start,
+                    endDate: dateRange.end
+                )
+                
+                // Convert entries
+                let digestsFromPage = response.feedentries.compactMap { entry -> Digest? in
+                    // FIX DATE PARSING - API returns format like "2025-10-13T01:17:11.303952"
+                    var createdDate = Date()
+                    if let dateString = entry.createdAt {
+                        // This format has microseconds but no timezone - it's UTC
+                        let formatter = DateFormatter()
+                        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+                        formatter.timeZone = TimeZone(abbreviation: "UTC")
+                        formatter.locale = Locale(identifier: "en_US_POSIX")
+                        
+                        if let date = formatter.date(from: dateString) {
+                            createdDate = date
+                        } else {
+                            // Try without microseconds
+                            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+                            if let date = formatter.date(from: dateString) {
+                                createdDate = date
+                            }
+                        }
+                    }
+                    
+                    let tagNames = entry.tags?.map { $0.name } ?? []
+                    
+                    // Parse replies
+                    // Parse replies - ROBUST VERSION
+                    var repliesTo: String? = nil
+                    if let content = entry.content {
+                        if content.contains("@reply:") {
+                            // Old format: @reply:12345
+                            if let range = content.range(of: "@reply:") {
+                                let afterReply = content[range.upperBound...]
+                                if let spaceIndex = afterReply.firstIndex(of: " ") {
+                                    repliesTo = String(afterReply[..<spaceIndex])
+                                } else {
+                                    repliesTo = String(afterReply)
+                                }
+                            }
+                        } else if content.contains("@") && content.contains(".xyzpulseinfra.com.") {
+                            // New format: @anything.xyzpulseinfra.com.DIGESTID.devicename
+                            // Find the .xyzpulseinfra.com. part and get what's after it
+                            if let range = content.range(of: ".xyzpulseinfra.com.") {
+                                let afterDomain = content[range.upperBound...]
+                                // Get everything up to the next dot (the digest ID)
+                                if let nextDot = afterDomain.firstIndex(of: ".") {
+                                    let digestId = String(afterDomain[..<nextDot])
+                                    repliesTo = digestId
+                                    print("[Reply Parse] Found reply to digest: \(digestId)")
+                                }
+                            }
+                        }
+                    }
+                    
+                    return Digest(
+                        id: String(entry.id),
+                        title: entry.title?.isEmpty == false ? entry.title! : "",
+                        content: entry.content ?? "",
+                        tags: tagNames,
+                        sourceNode: node.name,
+                        createdAt: createdDate,
+                        inPods: [podName],
+                        isMyPost: false,
+                        isReplyToMe: false,
+                        repliesTo: repliesTo
+                    )
+                }
+                
+                tagDigests.append(contentsOf: digestsFromPage)
+                
+                hasMorePages = currentPage < response.pages
+                currentPage += 1
+                
+                if digestsFromPage.count > 0 {
+                    print("[PodFeedView] Tag '\(tag)': got \(digestsFromPage.count) digests, newest: \(digestsFromPage.first?.createdAt ?? Date())")
+                }
+            } catch {
+                print("Failed to fetch tag '\(tag)' from \(node.name): \(error)")
+                break
+            }
+        }
+        
+        return tagDigests
     }
 }
 
