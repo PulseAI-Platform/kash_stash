@@ -90,11 +90,11 @@ struct PodFeedView: View {
     var filteredAndSortedDigests: [Digest] {
         var filtered = digests
         
-        // First, separate root posts from replies
-        let replies = filtered.filter { $0.repliesTo != nil }
-        let rootPosts = filtered.filter { $0.repliesTo == nil }
+        // CRITICAL: Filter out ALL replies from the main feed - they should only appear in threads
+        filtered = filtered.filter { $0.repliesTo == nil }
         
-        // Build a dictionary of replies by parent ID
+        // Build a dictionary of replies by parent ID (for counting)
+        let replies = digests.filter { $0.repliesTo != nil }
         var repliesByParent: [String: [Digest]] = [:]
         for reply in replies {
             if let parentId = reply.repliesTo {
@@ -109,9 +109,6 @@ struct PodFeedView: View {
         for (parentId, _) in repliesByParent {
             repliesByParent[parentId]?.sort { $0.createdAt < $1.createdAt }
         }
-        
-        // Start with root posts only
-        filtered = rootPosts
         
         // Filter by selected tags
         if !selectedTags.isEmpty {
@@ -151,17 +148,8 @@ struct PodFeedView: View {
             }
         }
         
-        // Now build the final list with threads
-        var threadedDigests: [Digest] = []
-        for rootPost in filtered {
-            threadedDigests.append(rootPost)
-            // Add replies right after their parent (you could show these indented in the UI)
-            if let replies = repliesByParent[rootPost.id] {
-                threadedDigests.append(contentsOf: replies)
-            }
-        }
-        
-        return threadedDigests
+        // Return ONLY root posts - no nested replies in the main feed
+        return filtered
     }
     
     var body: some View {
@@ -496,9 +484,12 @@ struct PodFeedView: View {
                 .padding()
             } else {
                 ForEach(filteredAndSortedDigests) { digest in
+                    let replyCount = digests.filter { $0.repliesTo == digest.id }.count
+                    
                     EnhancedDigestCard(
                         digest: digest,
-                        replyCount: digests.filter { $0.repliesTo == digest.id }.count,
+                        replyCount: replyCount,
+                        isReply: false,  // These are all root posts
                         onTap: {
                             selectedThreadDigest = digest
                         },
@@ -513,9 +504,11 @@ struct PodFeedView: View {
         } header: {
             HStack {
                 Text("\(filteredAndSortedDigests.count) Digest\(filteredAndSortedDigests.count == 1 ? "" : "s")")
-                if filteredAndSortedDigests.count != digests.count {
-                    Text("(\(digests.count) total)")
+                let totalReplies = digests.filter { $0.repliesTo != nil }.count
+                if totalReplies > 0 {
+                    Text("(\(totalReplies) replies hidden)")
                         .foregroundColor(.secondary)
+                        .font(.caption)
                 }
                 if isLoading {
                     ProgressView()
@@ -684,51 +677,49 @@ struct PodFeedView: View {
                 nodesToQuery = pod.discoveredNodes
             }
             
-            // PARALLEL FETCH: Create tasks for all tag/node combinations
+            // CRITICAL FIX: Hit each tag individually on each node
             await withTaskGroup(of: [Digest].self) { group in
-                for node in nodesToQuery {
-                    // Determine tags to fetch - NO FILTERING, get everything the pod advertises
+                for node in nodesToQuery where node.status == "active" {
+                    // Get all tags for this node
                     let tagsToFetch: [String]
                     if !selectedTags.isEmpty {
-                        // User has manually selected tags to filter by
+                        // User has filtered - only fetch selected tags
                         tagsToFetch = Array(selectedTags)
-                    } else if !pod.cachedTags.isEmpty {
-                        // Get ALL pod tags, not filtered
-                        tagsToFetch = pod.cachedTags
-                    } else if !node.advertisedTags.isEmpty {
-                        // Fall back to node's advertised tags
-                        tagsToFetch = node.advertisedTags
                     } else {
-                        continue
+                        // Get ALL available tags (advertised + discovered + from pod)
+                        let nodeTags = Set(node.advertisedTags)
+                        let podTags = Set(pod.cachedTags)
+                        let allTags = nodeTags.union(podTags)
+                        tagsToFetch = Array(allTags)
                     }
                     
-                    print("[PodFeedView] Starting parallel fetch from \(node.name) for \(tagsToFetch.count) tags")
+                    print("[PodFeedView] Node \(node.name): fetching \(tagsToFetch.count) tags separately")
                     
-                    // Create a task for each tag
+                    // IMPORTANT: Create a separate task for EACH tag
                     for tag in tagsToFetch {
                         group.addTask {
-                            await fetchDigestsForTag(
+                            print("[PodFeedView] Fetching tag '\(tag)' from \(node.name)")
+                            return await self.fetchDigestsForTag(
                                 tag: tag,
                                 from: node,
                                 podClient: podClient,
-                                podKey: pod.presharedKey,
-                                podName: pod.name,
+                                podKey: self.pod.presharedKey,
+                                podName: self.pod.name,
                                 dateRange: dateRange
                             )
                         }
                     }
                 }
                 
-                // Collect results from all parallel tasks
+                // Collect and dedupe results
                 for await digestBatch in group {
                     digestsLock.lock()
                     
-                    // Add ALL digests to dictionary (no filtering!)
                     for digest in digestBatch {
                         // Collect all tags
                         discoveredTagsSet.formUnion(digest.tags)
                         
-                        // Merge digest if it already exists
+                        // Dedupe by ID
                         if var existing = allDigestsDict[digest.id] {
                             var podSet = existing.inPodsSet
                             podSet.formUnion(digest.inPodsSet)
@@ -748,11 +739,11 @@ struct PodFeedView: View {
                 AppConfigStore.updateDiscoveredTags(podId: pod.id, tags: Array(discoveredTagsSet))
             }
             
-            // IMPORTANT: Sort the digests by creation date!
+            // Sort by creation date
             let sortedDigests = Array(allDigestsDict.values).sorted { $0.createdAt > $1.createdAt }
             
             await MainActor.run {
-                self.digests = sortedDigests // Use sorted array
+                self.digests = sortedDigests
                 self.allDiscoveredTags = Array(discoveredTagsSet)
                 self.isLoading = false
                 
@@ -767,7 +758,7 @@ struct PodFeedView: View {
                 }
             }
             
-            print("[PodFeedView] Total unique digests loaded: \(digests.count) (newest: \(sortedDigests.first?.createdAt ?? Date()))")
+            print("[PodFeedView] Loaded \(sortedDigests.count) unique digests from \(nodesToQuery.count) nodes and \(discoveredTagsSet.count) tags")
             
         } catch {
             await MainActor.run {

@@ -59,6 +59,20 @@ struct EnhancedDigestCard: View {
         }
     }
     
+    // Calculate if content needs truncation
+    // Calculate if content needs truncation
+    // TEST VERSION - triggers on almost any content
+    private var contentNeedsTruncation: Bool {
+        let lineCount = digest.content.components(separatedBy: .newlines).count
+        let charCount = digest.content.count
+        
+        // Debug print
+        print("[DigestCard] Content length: \(charCount) chars, \(lineCount) lines, isReply: \(isReply)")
+        
+        // Very low threshold for testing
+        return lineCount > 1 || charCount > 50
+    }
+    
     private let itemFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -129,24 +143,21 @@ struct EnhancedDigestCard: View {
                     }
                 }
                 
-                // Main content - tappable for expansion ONLY
-                VStack(alignment: .leading, spacing: 8) {
+                // Title - always show if present
+                if !displayTitle.isEmpty {
                     Text(displayTitle)
                         .font(isReply ? .subheadline : .headline)
                         .fontWeight(isReplyToMe ? .bold : (isReply ? .regular : .semibold))
-                    
-                    Text(digest.content)
-                        .font(isReply ? .callout : .body)
-                        .lineLimit(expandedText ? nil : (isReply ? 3 : 4))
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation {
-                        expandedText.toggle()
-                    }
-                }
-                
-                // Media previews - only show for non-replies or if expanded
+
+                // Content - NO VStack wrapper, just the text
+                Text(digest.content)
+                    .font(isReply ? .callout : .body)
+                    .lineLimit(expandedText ? nil : (isReply ? 3 : 4))
+                    .fixedSize(horizontal: false, vertical: true)
+
+
+                // Media previews - AFTER the button
                 if !linkURLs.isEmpty && (!isReply || expandedText) {
                     VStack(spacing: 8) {
                         ForEach(linkURLs.prefix(1), id: \.self) { url in
@@ -161,18 +172,17 @@ struct EnhancedDigestCard: View {
                     }
                     .padding(.vertical, 4)
                 }
-                
-                // Tags - show fewer for replies
+                // Tags - show fewer for replies unless expanded
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        let tagsToShow = isReply ? Array(digest.tags.prefix(3)) : digest.tags
+                        let tagsToShow = (isReply && !expandedText) ? Array(digest.tags.prefix(3)) : digest.tags
                         ForEach(tagsToShow, id: \.self) { tag in
                             DigestTagChip(
                                 tag: tag,
                                 isHighlighted: tag == myDeviceName.lowercased().replacingOccurrences(of: " ", with: "-")
                             )
                         }
-                        if isReply && digest.tags.count > 3 {
+                        if isReply && !expandedText && digest.tags.count > 3 {
                             Text("+\(digest.tags.count - 3)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -182,6 +192,27 @@ struct EnhancedDigestCard: View {
                 
                 // Action buttons - smaller for replies
                 HStack(spacing: isReply ? 12 : 16) {
+                    if contentNeedsTruncation {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                expandedText.toggle()
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Text(expandedText ? "Show less" : "Show more")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                Image(systemName: expandedText ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .background(Color.gray.opacity(0.1))
+                            .foregroundColor(.gray)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(HighPriorityButtonStyle())
+                    }
                     // Reply button
                     Button {
                         print("Reply button tapped for digest: \(digest.id)")
@@ -203,7 +234,7 @@ struct EnhancedDigestCard: View {
                     }
                     .buttonStyle(HighPriorityButtonStyle())
                     
-                    // Thread button - only show for root posts
+                    // Thread button - only show for root posts with replies
                     if replyCount > 0 && !isReply {
                         Button {
                             print("Thread button tapped for digest: \(digest.id)")

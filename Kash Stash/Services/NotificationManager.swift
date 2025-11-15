@@ -66,82 +66,89 @@ class NotificationManager: NSObject, ObservableObject {
         }
     }
     
-    func checkForNewContent(
-        in digests: [Digest],
-        for pod: PodConfig,
-        deviceName: String
-    ) {
-        guard pod.notifyNewDigests || pod.notifyReplies else { return }
+    // In NotificationManager.swift
+
+    func checkForNewContent(in digests: [Digest], for pod: PodConfig, deviceName: String) {
+        print("[NotificationManager] Checking \(digests.count) digests for new content in \(pod.name)")
         
-        let cleanDeviceName = deviceName.lowercased().replacingOccurrences(of: " ", with: "-")
+        var updatedPod = pod
+        var newDigests: [Digest] = []
         
-        // Sort digests by creation date
+        // Find the newest digest ID
         let sortedDigests = digests.sorted { $0.createdAt > $1.createdAt }
+        guard let newestDigest = sortedDigests.first else { return }
         
-        // Check for new digests (non-replies)
-        if pod.notifyNewDigests {
-            let newDigests = sortedDigests.filter { digest in
-                // Skip if it's a reply
-                if digest.repliesTo != nil || digest.content.hasPrefix("@") || digest.tags.contains("reply") {
-                    return false
+        // Check if we have a last seen ID
+        if let lastSeenId = pod.lastSeenDigestId {
+            print("[NotificationManager] Last seen digest ID: \(lastSeenId)")
+            
+            // Find all digests newer than the last seen one
+            for digest in sortedDigests {
+                if digest.id == lastSeenId {
+                    break // Stop when we reach the last seen digest
                 }
-                
-                // Skip if we've already notified about it
-                if wasNotified(digestId: digest.id, type: .digest) {
-                    return false
-                }
-                
-                // Skip if it's our own post
-                if digest.tags.contains("from-\(cleanDeviceName)") {
-                    return false
-                }
-                
-                // Skip if it's older than 24 hours (avoid spam on first load)
-                if digest.createdAt.timeIntervalSinceNow < -86400 {
-                    return false
-                }
-                
-                return true
+                newDigests.append(digest)
             }
             
-            for digest in newDigests.prefix(5) { // Limit to 5 notifications
-                sendNewDigestNotification(digest: digest, pod: pod)
-                markAsNotified(digestId: digest.id, type: .digest)
-            }
+            print("[NotificationManager] Found \(newDigests.count) new digests since last check")
+        } else {
+            // First time checking - don't notify for everything, just set the marker
+            print("[NotificationManager] First time checking pod \(pod.name), setting marker")
+            updatedPod.lastSeenDigestId = newestDigest.id
+            AppConfigStore.updatePodConfig(updatedPod)
+            return
         }
         
-        // Check for new replies in this pod
-        if pod.notifyReplies {
-            let newReplies = sortedDigests.filter { digest in
-                // Must be a reply
-                guard digest.repliesTo != nil || digest.content.hasPrefix("@") || digest.tags.contains("reply") else {
-                    return false
-                }
-                
-                // Skip if already notified
-                if wasNotified(digestId: digest.id, type: .reply) {
-                    return false
-                }
-                
-                // Skip if it's our own reply
-                if digest.tags.contains("from-\(cleanDeviceName)") {
-                    return false
-                }
-                
-                // Check if it's a reply to us specifically
-                let isReplyToMe = digest.content.lowercased().contains(".\(cleanDeviceName)")
-                
-                // Skip if older than 24 hours
-                if digest.createdAt.timeIntervalSinceNow < -86400 {
-                    return false
-                }
-                
-                return isReplyToMe
-            }
+        // If we have new digests and notifications are enabled
+        if !newDigests.isEmpty && pod.notifyNewDigests {
+            print("[NotificationManager] Sending notification for \(newDigests.count) new digests")
             
-            for reply in newReplies.prefix(5) {
-                sendReplyNotification(digest: reply, pod: pod)
-                markAsNotified(digestId: reply.id, type: .reply)
+            // Send a summary notification
+            sendNewDigestsNotification(count: newDigests.count, podName: pod.name, firstDigest: newDigests.first!)
+            
+            // Update the last seen ID
+            updatedPod.lastSeenDigestId = newestDigest.id
+            AppConfigStore.updatePodConfig(updatedPod)
+        }
+        
+        // Also check for replies if enabled
+        if pod.notifyReplies {
+            checkForNewReplies(in: digests, deviceName: deviceName, nodeName: pod.name)
+        }
+    }
+
+    private func sendNewDigestsNotification(count: Int, podName: String, firstDigest: Digest) {
+        print("[NotificationManager] Creating notification for \(count) new posts in \(podName)")
+        
+        let content = UNMutableNotificationContent()
+        content.title = "New posts in \(podName)"
+        
+        if count == 1 {
+            // Single digest - show preview
+            let preview = firstDigest.title.isEmpty ?
+                String(firstDigest.content.prefix(100)) :
+                firstDigest.title
+            content.body = preview
+        } else {
+            // Multiple digests - show count
+            content.body = "\(count) new posts available"
+        }
+        
+        content.sound = .default
+        content.badge = NSNumber(value: UIApplication.shared.applicationIconBadgeNumber + 1)
+        content.categoryIdentifier = "DIGEST"
+        
+        let request = UNNotificationRequest(
+            identifier: "new-digests-\(podName)-\(Date().timeIntervalSince1970)",
+            content: content,
+            trigger: nil // Deliver immediately
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("[NotificationManager] ❌ Failed to send notification: \(error)")
+            } else {
+                print("[NotificationManager] ✅ Notification sent successfully")
             }
         }
     }
