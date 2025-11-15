@@ -20,6 +20,11 @@
         android:title="Manage Kash Files"
         android:orderInCategory="150"
         app:showAsAction="never" />
+    <item
+        android:id="@+id/action_notification_status"
+        android:title="Notification Status"
+        android:icon="@drawable/ic_notifications"
+        android:showAsAction="never" />
 
     <item
         android:id="@+id/action_settings"

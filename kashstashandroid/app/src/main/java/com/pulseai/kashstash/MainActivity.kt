@@ -1,9 +1,11 @@
 package com.pulseai.kashstash
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.util.Base64
@@ -19,14 +21,25 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.google.android.material.snackbar.Snackbar
-import com.pulseai.kashstash.R  // ADD THIS LINE
+import com.pulseai.kashstash.R
 import com.pulseai.kashstash.databinding.ActivityMainBinding
+import com.pulseai.kashstash.pods.models.Digest
+import com.pulseai.kashstash.pods.models.PodConfig
+import com.pulseai.kashstash.pods.services.BackgroundSyncManager
+import com.pulseai.kashstash.pods.services.MultiPodAggregator
+import com.pulseai.kashstash.pods.services.NotificationManager
+import com.pulseai.kashstash.pods.services.NotificationPermissionHelper
+import com.pulseai.kashstash.pods.services.PodClient
 import com.pulseai.kashstash.pods.storage.PodDatabase
+import com.pulseai.kashstash.pods.storage.PodPreferences
 import com.pulseai.kashstash.pods.storage.PodRepository
 import com.pulseai.kashstash.pods.ui.PodsListFragment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -37,11 +50,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
+import java.util.Date
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val CAMERA_PERMISSION_REQUEST_CODE = 100
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 101
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -51,6 +66,19 @@ class MainActivity : AppCompatActivity() {
     private val recentTagsManager = RecentTagsManager()
     private var tempPhotoUri: Uri? = null
     private var pendingCameraAction: (() -> Unit)? = null
+
+    // Notification permission launcher
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            Toast.makeText(this, "Notifications enabled!", Toast.LENGTH_SHORT).show()
+            // Sync device names and start background sync if configured
+            BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
+        } else {
+            Toast.makeText(this, "Notifications disabled. You can enable them in Settings.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     // QR image picker from gallery
     private val qrImagePicker = registerForActivityResult(
@@ -89,9 +117,37 @@ class MainActivity : AppCompatActivity() {
         updatePodsDisplay()
         handleShareIntent(intent)
 
+        // Check and request notification permission if needed (Android 13+)
+        checkNotificationPermission()
+
+        // Sync device names from endpoints and potentially start background sync
+        BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
+
         // Listen for back stack changes
         supportFragmentManager.addOnBackStackChangedListener {
             updateUIVisibility()
+        }
+    }
+
+    private fun checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!NotificationPermissionHelper.isPermissionGranted(this)) {
+                // Check if we should show rationale
+                if (NotificationPermissionHelper.shouldShowRationale(this)) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Enable Notifications")
+                        .setMessage("Enable notifications to get alerts when someone replies to your posts or when new content is posted to your pods.")
+                        .setPositiveButton("Enable") { _, _ ->
+                            NotificationPermissionHelper.requestPermission(notificationPermissionLauncher)
+                        }
+                        .setNegativeButton("Not Now", null)
+                        .show()
+                } else {
+                    // First time asking or user selected "Don't ask again"
+                    // You might want to show an initial explanation here too
+                    NotificationPermissionHelper.requestPermission(notificationPermissionLauncher)
+                }
+            }
         }
     }
 
@@ -137,8 +193,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupPodsButtons() {
-        // Main pods button
-
         // Manage pods button in header
         findViewById<Button>(R.id.managePodsButton).setOnClickListener {
             navigateToPods()
@@ -191,6 +245,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Device names will be synced when endpoints are actually changed
+        // Don't sync here to avoid WorkManager issues
+    }
+
     // ==== UI UPDATE METHODS ====
     private fun updateCurrentInstancesText() {
         val config = ConfigManager.load(this)
@@ -209,6 +269,13 @@ class MainActivity : AppCompatActivity() {
             null
         }
         kashFilesTv.text = if (kashFiles == null) "Kash Files: (none)" else "Kash Files: ${kashFiles.name}"
+
+        // Sync device names whenever endpoints change (safe version)
+        try {
+            BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error syncing device names", e)
+        }
     }
 
     // ==== ENDPOINT MANAGEMENT ====
@@ -1573,6 +1640,271 @@ class MainActivity : AppCompatActivity() {
         }
         return tags
     }
+
+    // ==== DEBUG METHODS ====
+    private fun showSyncLogs() {
+        val prefs = PodPreferences(this)
+        val deviceNames = prefs.deviceNames
+
+        lifecycleScope.launch {
+            try {
+                val database = PodDatabase.getDatabase(this@MainActivity)
+                val repo = PodRepository(database.podDao())
+
+                // Collect flows properly
+                val activePods = repo.getActivePods().first()
+                val allDigests = repo.getRecentDigests(100).first()
+
+                val logMessage = buildString {
+                    appendLine("=== SYNC DEBUG INFO ===")
+                    appendLine()
+                    appendLine("Device Names (${deviceNames.size}):")
+                    if (deviceNames.isEmpty()) {
+                        appendLine("  ⚠️ No device names configured!")
+                    } else {
+                        deviceNames.forEach { appendLine("  • $it") }
+                    }
+                    appendLine()
+                    appendLine("Active Pods (${activePods.size}):")
+                    if (activePods.isEmpty()) {
+                        appendLine("  ⚠️ No active pods!")
+                    } else {
+                        activePods.forEach { pod ->
+                            appendLine("  • ${pod.name}")
+                            appendLine("    - Notify new: ${pod.notifyNewDigests}")
+                            appendLine("    - Notify replies: ${pod.notifyReplies}")
+                            appendLine("    - Last refresh: ${if (pod.lastRefresh > 0) "${(System.currentTimeMillis() - pod.lastRefresh) / 60000} min ago" else "never"}")
+                        }
+                    }
+                    appendLine()
+                    appendLine("Total Digests in DB: ${allDigests.size}")
+
+                    if (allDigests.isEmpty()) {
+                        appendLine("  ⚠️ No digests in database - sync may not be working")
+                    } else {
+                        appendLine()
+                        appendLine("Recent Digests (last 5):")
+                        allDigests.sortedByDescending { it.createdAt }.take(5).forEach { digest ->
+                            appendLine("  • ID: ${digest.id.take(8)}...")
+                            appendLine("    Created: ${digest.createdAt}")
+                            appendLine("    Tags: ${digest.tags.joinToString(", ")}")
+                            appendLine("    IsMyPost: ${digest.isMyPost}")
+                            appendLine("    IsReplyToMe: ${digest.isReplyToMe}")
+                            appendLine("    InPods: ${digest.inPods.joinToString(", ")}")
+                        }
+                    }
+
+                    appendLine()
+                    appendLine("Notification Tracking:")
+                    val myPosts = repo.getMyPosts().first()
+                    val repliesToMe = repo.getRepliesToMe().first()
+                    appendLine("  My Posts: ${myPosts.size}")
+                    appendLine("  Replies to Me: ${repliesToMe.size}")
+                }
+
+                withContext(Dispatchers.Main) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Sync Debug Info")
+                        .setMessage(logMessage)
+                        .setPositiveButton("Copy to Clipboard") { _, _ ->
+                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            val clip = android.content.ClipData.newPlainText("Sync Debug", logMessage)
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(this@MainActivity, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        }
+                        .setNegativeButton("Close", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Error")
+                        .setMessage("Failed to load debug info:\n${e.message}")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun showDebugOptionsDialog() {
+        val options = arrayOf(
+            "View Sync Logs",
+            "Test Notification",
+            "Force Sync Now",
+            "WorkManager Status"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("Debug Options")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showSyncLogs()
+                    1 -> sendTestNotification()
+                    2 -> forceSyncNow()
+                    3 -> showWorkManagerStatus()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun sendTestNotification() {
+        val testDigest = Digest(
+            id = "test-${System.currentTimeMillis()}",
+            title = "Test Notification",
+            content = "This is a test notification from Kash Stash. If you see this, notifications are working!",
+            tags = listOf("test"),
+            sourceNode = "test",
+            createdAt = Date(),
+            inPods = listOf("Test Pod")
+        )
+
+        val testPod = PodConfig(
+            name = "Test Pod",
+            entranceNodeUrl = "test",
+            presharedKey = "test",
+            notifyNewDigests = true,
+            notifyReplies = true
+        )
+
+        val notificationManager = NotificationManager(this)
+        notificationManager.checkForNewContent(listOf(testDigest), testPod, setOf("test"))
+
+        Toast.makeText(this, "Test notification sent - check your notifications", Toast.LENGTH_LONG).show()
+    }
+
+    private fun forceSyncNow() {
+        lifecycleScope.launch {
+            try {
+                Toast.makeText(this@MainActivity, "Starting sync...", Toast.LENGTH_SHORT).show()
+
+                val database = PodDatabase.getDatabase(this@MainActivity)
+                val repo = PodRepository(database.podDao())
+                val prefs = PodPreferences(this@MainActivity)
+                val podClient = PodClient()
+
+                val deviceNames = prefs.deviceNames
+                val activePods = repo.getActivePods().first()
+
+                if (deviceNames.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No device names configured", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                if (activePods.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No active pods", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                val aggregator = MultiPodAggregator(
+                    podClient, repo, deviceNames
+                )
+
+                val digests = withContext(Dispatchers.IO) {
+                    aggregator.fetchFromAllPods(activePods)
+                }
+
+                repo.insertDigests(digests)
+
+                prefs.lastSyncTime = System.currentTimeMillis()
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "Sync complete! Fetched ${digests.size} digests",
+                    Toast.LENGTH_LONG
+                ).show()
+
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Sync failed: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun showWorkManagerStatus() {
+        lifecycleScope.launch {
+            try {
+                val workManager = WorkManager.getInstance(this@MainActivity)
+
+                val periodicWork = withContext(Dispatchers.IO) {
+                    workManager.getWorkInfosForUniqueWork("pod_sync_work").get()
+                }
+                val immediateWork = withContext(Dispatchers.IO) {
+                    workManager.getWorkInfosForUniqueWork("pod_sync_immediate").get()
+                }
+
+                val status = buildString {
+                    appendLine("=== WORKMANAGER STATUS ===")
+                    appendLine()
+                    appendLine("Periodic Work:")
+                    if (periodicWork.isEmpty()) {
+                        appendLine("  ⚠️ No periodic work scheduled!")
+                        appendLine("  This means background sync is not running.")
+                    } else {
+                        periodicWork.forEach { info ->
+                            appendLine("  State: ${info.state}")
+                            appendLine("  Tags: ${info.tags.joinToString()}")
+                            appendLine("  Run Attempt: ${info.runAttemptCount}")
+                            if (info.state == WorkInfo.State.FAILED) {
+                                appendLine("  ⚠️ FAILED - Check logs")
+                            }
+                        }
+                    }
+                    appendLine()
+                    appendLine("Immediate Work:")
+                    if (immediateWork.isEmpty()) {
+                        appendLine("  No immediate work")
+                    } else {
+                        immediateWork.forEach { info ->
+                            appendLine("  State: ${info.state}")
+                            appendLine("  Run Attempt: ${info.runAttemptCount}")
+                        }
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("WorkManager Status")
+                        .setMessage(status)
+                        .setPositiveButton("Reschedule Sync") { _, _ ->
+                            rescheduleBackgroundSync()
+                        }
+                        .setNegativeButton("Close", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Error: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun rescheduleBackgroundSync() {
+        try {
+            // Cancel existing work
+            WorkManager.getInstance(this).cancelUniqueWork("pod_sync_work")
+
+            // Wait a moment then reschedule
+            lifecycleScope.launch {
+                delay(500)
+                BackgroundSyncManager.syncDeviceNamesFromEndpoints(this@MainActivity)
+                BackgroundSyncManager.setBackgroundSyncEnabled(this@MainActivity, true)
+                Toast.makeText(this@MainActivity, "Background sync rescheduled", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Failed to reschedule: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     // ==== MENU ====
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
@@ -1593,8 +1925,60 @@ class MainActivity : AppCompatActivity() {
                 showManageKashFilesDialog()
                 true
             }
+            R.id.action_notification_status -> {
+                showNotificationStatus()
+                true
+            }
             R.id.action_settings -> true
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    private fun showNotificationStatus() {
+        val status = BackgroundSyncManager.isProperlyConfigured(this)
+        val prefs = PodPreferences(this)
+
+        val message = buildString {
+            appendLine("Status: ${if (status.isFullyConfigured) "✓ Active" else "⚠ Incomplete"}")
+            appendLine()
+            appendLine("Device Names:")
+            if (status.deviceNames.isEmpty()) {
+                appendLine("  None configured - add an endpoint")
+            } else {
+                status.deviceNames.forEach { name ->
+                    appendLine("  • $name")
+                }
+            }
+            appendLine()
+            appendLine("Notification Permission: ${if (status.hasNotificationPermission) "✓ Granted" else "✗ Not granted"}")
+            appendLine()
+            if (status.lastSyncTime > 0) {
+                val minutesAgo = (System.currentTimeMillis() - status.lastSyncTime) / 60000
+                appendLine("Last sync: $minutesAgo minutes ago")
+            } else {
+                appendLine("Never synced")
+            }
+
+            if (status.lastSyncError != null) {
+                appendLine()
+                appendLine("⚠️ Last Error:")
+                appendLine(status.lastSyncError)
+            }
+        }
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Background Notifications")
+            .setMessage(message)
+            .setPositiveButton("Test Sync Now") { _, _ ->
+                BackgroundSyncManager.triggerImmediateSync(this)
+                Toast.makeText(this, "Sync triggered - check status again in a few seconds", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Close", null)
+
+        builder.setNeutralButton("Debug") { _, _ ->
+            showDebugOptionsDialog()
+        }
+
+        builder.show()
     }
 }

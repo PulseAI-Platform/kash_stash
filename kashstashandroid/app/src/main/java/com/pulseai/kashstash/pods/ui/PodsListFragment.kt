@@ -17,6 +17,7 @@ import com.pulseai.kashstash.R
 import com.pulseai.kashstash.pods.models.PodConfig
 import com.pulseai.kashstash.pods.storage.PodDatabase
 import com.pulseai.kashstash.pods.storage.PodRepository
+import com.pulseai.kashstash.pods.services.BackgroundSyncManager
 import kotlinx.coroutines.launch
 import android.content.Context
 import com.pulseai.kashstash.pods.services.PodClient
@@ -224,6 +225,44 @@ class PodsListFragment : Fragment() {
                 .setTitle("${pod.name} Nodes")
                 .setMessage(message)
                 .setPositiveButton("OK", null)
+                .show()
+        }
+    }
+
+    private fun showNotificationStatus() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val status = BackgroundSyncManager.isProperlyConfigured(requireContext())
+
+            val message = buildString {
+                appendLine("Status: ${if (status.isFullyConfigured) "✓ Active" else "⚠ Incomplete"}")
+                appendLine()
+                appendLine("Device Names:")
+                if (status.deviceNames.isEmpty()) {
+                    appendLine("  None configured - scan a Post Key QR code")
+                } else {
+                    status.deviceNames.forEach { name ->
+                        appendLine("  • $name")
+                    }
+                }
+                appendLine()
+                appendLine("Notification Permission: ${if (status.hasNotificationPermission) "✓ Granted" else "✗ Not granted"}")
+                appendLine()
+                if (status.lastSyncTime > 0) {
+                    val minutesAgo = (System.currentTimeMillis() - status.lastSyncTime) / 60000
+                    appendLine("Last sync: $minutesAgo minutes ago")
+                } else {
+                    appendLine("Never synced")
+                }
+            }
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Background Notifications")
+                .setMessage(message)
+                .setPositiveButton("Test Sync Now") { _, _ ->
+                    BackgroundSyncManager.triggerImmediateSync(requireContext())
+                    Toast.makeText(requireContext(), "Sync triggered", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Close", null)
                 .show()
         }
     }

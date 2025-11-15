@@ -82,7 +82,7 @@
             android:id="@+id/linkPreviewContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:background="#1A007AFF"
             android:padding="12dp"
             android:layout_marginBottom="12dp"
@@ -90,36 +90,57 @@
             android:focusable="true"
             android:visibility="gone">
 
-            <TextView
-                android:id="@+id/linkPreviewTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Link Title"
-                android:textSize="14sp"
-                android:textColor="#007AFF"
-                android:fontFamily="sans-serif-medium"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+            <!-- Preview Image (for YouTube thumbnails, images, etc) -->
+            <ImageView
+                android:id="@+id/linkPreviewImage"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:scaleType="centerCrop"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="Link preview image"
+                android:visibility="gone"/>
 
-            <TextView
-                android:id="@+id/linkPreviewDescription"
-                android:layout_width="match_parent"
+            <!-- Text content container -->
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="Description"
-                android:textSize="12sp"
-                android:textColor="#CCCCCC"
-                android:maxLines="2"
-                android:ellipsize="end"
-                android:layout_marginTop="4dp"/>
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_gravity="center_vertical">
 
-            <TextView
-                android:id="@+id/linkPreviewUrl"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="website.com"
-                android:textSize="11sp"
-                android:textColor="#666666"
-                android:layout_marginTop="4dp"/>
+                <TextView
+                    android:id="@+id/linkPreviewTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Link Title"
+                    android:textSize="14sp"
+                    android:textColor="#007AFF"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="2"
+                    android:ellipsize="end"/>
+
+                <TextView
+                    android:id="@+id/linkPreviewDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Description"
+                    android:textSize="12sp"
+                    android:textColor="#CCCCCC"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    android:layout_marginTop="4dp"/>
+
+                <TextView
+                    android:id="@+id/linkPreviewUrl"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="website.com"
+                    android:textSize="11sp"
+                    android:textColor="#666666"
+                    android:maxLines="2"
+                    android:ellipsize="middle"
+                    android:layout_marginTop="4dp"/>
+            </LinearLayout>
         </LinearLayout>
 
         <!-- Tags -->

@@ -9,22 +9,28 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
+import android.widget.ImageView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.pulseai.kashstash.R
 import com.pulseai.kashstash.pods.models.Digest
 import android.widget.LinearLayout
+import coil.load
+import coil.transform.RoundedCornersTransformation
 
 class DigestAdapter(
     private val onReplyClick: (Digest) -> Unit,
     private val onThreadClick: (Digest) -> Unit,
     private val onShareClick: (Digest) -> Unit,
-    private val onItemClick: (Digest) -> Unit = {}  // Add item click for expanding/link preview
+    private val onItemClick: (Digest) -> Unit = {}
 ) : ListAdapter<Digest, DigestAdapter.DigestViewHolder>(DigestDiffCallback()) {
 
     // Track reply counts for each digest
     private val replyCountMap = mutableMapOf<String, Int>()
+
+    // Cache parsed link previews to avoid re-parsing on scroll
+    private val linkPreviewCache = mutableMapOf<String, LinkPreviewData>()
 
     fun updateReplyCounts(counts: Map<String, Int>) {
         replyCountMap.clear()
@@ -35,11 +41,25 @@ class DigestAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DigestViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_digest, parent, false)
-        return DigestViewHolder(view, onReplyClick, onThreadClick, onShareClick, onItemClick, replyCountMap)
+        return DigestViewHolder(view, onReplyClick, onThreadClick, onShareClick, onItemClick, replyCountMap, linkPreviewCache)
     }
 
     override fun onBindViewHolder(holder: DigestViewHolder, position: Int) {
         holder.bind(getItem(position))
+    }
+
+    data class LinkPreviewData(
+        val url: String,
+        val title: String,
+        val description: String,
+        val domain: String,
+        val backgroundColor: Int,
+        val thumbnailUrl: String? = null,
+        val linkType: LinkType
+    )
+
+    enum class LinkType {
+        YOUTUBE, TWITTER, GITHUB, REDDIT, IMAGE, GENERIC
     }
 
     class DigestViewHolder(
@@ -48,7 +68,8 @@ class DigestAdapter(
         private val onThreadClick: (Digest) -> Unit,
         private val onShareClick: (Digest) -> Unit,
         private val onItemClick: (Digest) -> Unit,
-        private val replyCountMap: Map<String, Int>
+        private val replyCountMap: Map<String, Int>,
+        private val linkPreviewCache: MutableMap<String, LinkPreviewData>
     ) : RecyclerView.ViewHolder(itemView) {
 
         private val podBadge: TextView = itemView.findViewById(R.id.podBadge)
@@ -63,6 +84,7 @@ class DigestAdapter(
 
         // Link preview views
         private val linkPreviewContainer: LinearLayout? = itemView.findViewById(R.id.linkPreviewContainer)
+        private val linkPreviewImage: ImageView? = itemView.findViewById(R.id.linkPreviewImage)
         private val linkPreviewTitle: TextView? = itemView.findViewById(R.id.linkPreviewTitle)
         private val linkPreviewDescription: TextView? = itemView.findViewById(R.id.linkPreviewDescription)
         private val linkPreviewUrl: TextView? = itemView.findViewById(R.id.linkPreviewUrl)
@@ -91,7 +113,7 @@ class DigestAdapter(
             digestContent.text = formatContentWithMentions(digest.content)
 
             // Detect and show link preview
-            detectAndShowLinkPreview(digest.content)
+            detectAndShowLinkPreview(digest)
 
             // Tags
             if (digest.tags.isNotEmpty()) {
@@ -143,59 +165,44 @@ class DigestAdapter(
             shareButton.setOnClickListener { onShareClick(digest) }
         }
 
-        private fun detectAndShowLinkPreview(content: String) {
-            val urlPattern = Regex("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=]+")
-            val firstUrl = urlPattern.find(content)?.value
+        private fun detectAndShowLinkPreview(digest: Digest) {
+            val urlPattern = Regex("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+")
+            val firstUrl = urlPattern.find(digest.content)?.value
 
             if (firstUrl != null && linkPreviewContainer != null) {
                 linkPreviewContainer.visibility = View.VISIBLE
 
-                // Extract domain for display
-                val domain = extractDomain(firstUrl)
-                linkPreviewUrl?.text = domain
+                // Check cache first
+                val previewData = linkPreviewCache.getOrPut(digest.id) {
+                    parseLinkPreview(firstUrl)
+                }
 
-                // Detect special types and set appropriate preview
-                when {
-                    firstUrl.contains("youtube.com") || firstUrl.contains("youtu.be") -> {
-                        linkPreviewTitle?.text = "📺 YouTube Video"
-                        linkPreviewDescription?.text = "Tap to watch on YouTube"
-                        linkPreviewContainer.setBackgroundColor(0x1AFF0000)
+                // Set text content
+                linkPreviewTitle?.text = previewData.title
+                linkPreviewDescription?.text = previewData.description
+                linkPreviewUrl?.text = previewData.domain
+                linkPreviewContainer.setBackgroundColor(previewData.backgroundColor)
+
+                // Load image if available
+                if (previewData.thumbnailUrl != null && linkPreviewImage != null) {
+                    linkPreviewImage.visibility = View.VISIBLE
+                    linkPreviewImage.load(previewData.thumbnailUrl) {
+                        crossfade(true)
+                        transformations(RoundedCornersTransformation(8f))
+                        placeholder(R.drawable.ic_image_placeholder) // You'll need to add this
+                        error(R.drawable.ic_image_error) // You'll need to add this
                     }
-                    firstUrl.contains("twitter.com") || firstUrl.contains("x.com") -> {
-                        linkPreviewTitle?.text = "𝕏 Post"
-                        linkPreviewDescription?.text = "View on X (formerly Twitter)"
-                        linkPreviewContainer.setBackgroundColor(0x1A1DA1F2)
-                    }
-                    firstUrl.contains("github.com") -> {
-                        linkPreviewTitle?.text = "🐙 GitHub"
-                        linkPreviewDescription?.text = extractGithubInfo(firstUrl)
-                        linkPreviewContainer.setBackgroundColor(0x1A238636)
-                    }
-                    firstUrl.contains("reddit.com") -> {
-                        linkPreviewTitle?.text = "🟠 Reddit"
-                        linkPreviewDescription?.text = "View on Reddit"
-                        linkPreviewContainer.setBackgroundColor(0x1AFF4500)
-                    }
-                    isImageUrl(firstUrl) -> {
-                        linkPreviewTitle?.text = "🖼️ Image"
-                        linkPreviewDescription?.text = "Tap to view image"
-                        linkPreviewContainer.setBackgroundColor(0x1A007AFF)
-                    }
-                    else -> {
-                        linkPreviewTitle?.text = "🔗 ${domain}"
-                        linkPreviewDescription?.text = "Tap to open link"
-                        linkPreviewContainer.setBackgroundColor(0x1A007AFF)
-                    }
+                } else {
+                    linkPreviewImage?.visibility = View.GONE
                 }
 
                 // Set click listener to open the link
                 linkPreviewContainer.setOnClickListener {
                     try {
                         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                        intent.data = android.net.Uri.parse(firstUrl)
+                        intent.data = android.net.Uri.parse(previewData.url)
                         itemView.context.startActivity(intent)
                     } catch (e: Exception) {
-                        // Handle case where no browser is available
                         android.widget.Toast.makeText(
                             itemView.context,
                             "Cannot open link",
@@ -208,12 +215,125 @@ class DigestAdapter(
             }
         }
 
+        private fun parseLinkPreview(url: String): LinkPreviewData {
+            return when {
+                // YouTube
+                url.contains("youtube.com/watch") || url.contains("youtu.be/") -> {
+                    val videoId = extractYouTubeVideoId(url)
+                    LinkPreviewData(
+                        url = url,
+                        title = "📺 YouTube Video",
+                        description = "Tap to watch on YouTube",
+                        domain = extractDomain(url),
+                        backgroundColor = 0x1AFF0000,
+                        thumbnailUrl = videoId?.let { "https://img.youtube.com/vi/$it/mqdefault.jpg" },
+                        linkType = LinkType.YOUTUBE
+                    )
+                }
+
+                // Twitter/X
+                url.contains("twitter.com") || url.contains("x.com") -> {
+                    LinkPreviewData(
+                        url = url,
+                        title = "𝕏 Post",
+                        description = "View on X (formerly Twitter)",
+                        domain = extractDomain(url),
+                        backgroundColor = 0x1A1DA1F2,
+                        thumbnailUrl = null,
+                        linkType = LinkType.TWITTER
+                    )
+                }
+
+                // GitHub
+                url.contains("github.com") -> {
+                    LinkPreviewData(
+                        url = url,
+                        title = "🐙 GitHub",
+                        description = extractGithubInfo(url),
+                        domain = extractDomain(url),
+                        backgroundColor = 0x1A238636,
+                        thumbnailUrl = null,
+                        linkType = LinkType.GITHUB
+                    )
+                }
+
+                // Reddit
+                url.contains("reddit.com") -> {
+                    LinkPreviewData(
+                        url = url,
+                        title = "🟠 Reddit",
+                        description = "View on Reddit",
+                        domain = extractDomain(url),
+                        backgroundColor = 0x1AFF4500,
+                        thumbnailUrl = null,
+                        linkType = LinkType.REDDIT
+                    )
+                }
+
+                // Image URLs
+                isImageUrl(url) -> {
+                    LinkPreviewData(
+                        url = url,
+                        title = "🖼️ Image",
+                        description = "Tap to view image",
+                        domain = extractDomain(url),
+                        backgroundColor = 0x1A007AFF,
+                        thumbnailUrl = url, // Load the actual image
+                        linkType = LinkType.IMAGE
+                    )
+                }
+
+                // Generic link
+                else -> {
+                    val domain = extractDomain(url)
+                    LinkPreviewData(
+                        url = url,
+                        title = "🔗 $domain",
+                        description = "Tap to open link",
+                        domain = domain,
+                        backgroundColor = 0x1A007AFF,
+                        thumbnailUrl = null,
+                        linkType = LinkType.GENERIC
+                    )
+                }
+            }
+        }
+
+        private fun extractYouTubeVideoId(url: String): String? {
+            return try {
+                when {
+                    url.contains("youtu.be/") -> {
+                        url.substringAfter("youtu.be/").substringBefore("?")
+                    }
+                    url.contains("youtube.com/watch?v=") -> {
+                        url.substringAfter("v=").substringBefore("&")
+                    }
+                    else -> null
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+
         private fun extractDomain(url: String): String {
             return try {
                 val uri = android.net.Uri.parse(url)
-                uri.host?.removePrefix("www.") ?: url
+                val host = uri.host?.removePrefix("www.") ?: return url
+                // For very long URLs, show domain + path hint
+                val path = uri.path
+                if (path != null && path.length > 20) {
+                    "$host/...${path.takeLast(15)}"
+                } else if (path != null && path.isNotEmpty() && path != "/") {
+                    "$host$path"
+                } else {
+                    host
+                }
             } catch (e: Exception) {
-                url
+                // Fallback: extract manually
+                url.substringAfter("://")
+                    .substringBefore("/")
+                    .removePrefix("www.")
+                    .take(50) + if (url.length > 50) "..." else ""
             }
         }
 
@@ -223,23 +343,37 @@ class DigestAdapter(
                 url.contains("/issues/") -> "Issue"
                 url.contains("/releases/") -> "Release"
                 url.contains("/commit/") -> "Commit"
+                url.contains("/tree/") -> "Repository Branch"
+                url.contains("/blob/") -> "File"
                 else -> "Repository"
             }
         }
 
         private fun isImageUrl(url: String): Boolean {
-            val imageExtensions = listOf(".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
-            return imageExtensions.any { url.lowercase().contains(it) }
+            val imageExtensions = listOf(".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico")
+            val lowerUrl = url.lowercase()
+            return imageExtensions.any { lowerUrl.contains(it) }
         }
 
         private fun formatContentWithMentions(content: String): SpannableString {
             val spannable = SpannableString(content)
 
-            // Highlight @mentions
-            val mentionPattern = Regex("@[a-zA-Z0-9._-]+")
+            // Highlight @mentions (full pod mention pattern)
+            val mentionPattern = Regex("@[a-zA-Z0-9._-]+(\\.probes-[^\\s]+)?")
             mentionPattern.findAll(content).forEach { match ->
                 spannable.setSpan(
                     ForegroundColorSpan(0xFF007AFF.toInt()),
+                    match.range.first,
+                    match.range.last + 1,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            // Highlight URLs
+            val urlPattern = Regex("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+")
+            urlPattern.findAll(content).forEach { match ->
+                spannable.setSpan(
+                    ForegroundColorSpan(0xFF00D9FF.toInt()),
                     match.range.first,
                     match.range.last + 1,
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE

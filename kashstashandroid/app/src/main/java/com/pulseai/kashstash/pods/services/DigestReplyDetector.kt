@@ -1,22 +1,32 @@
+// File: pods/services/DigestReplyDetector.kt
 package com.pulseai.kashstash.pods.services
 
 import com.pulseai.kashstash.pods.models.Digest
 
-class DigestReplyDetector(private val deviceName: String) {
+class DigestReplyDetector(private val deviceNames: Set<String>) {
 
     fun analyzeDigests(digests: List<Digest>): List<Digest> {
-        val analyzed = digests.toMutableList()
-        val cleanDeviceName = deviceName.lowercase().replace(" ", "-")
+        if (deviceNames.isEmpty()) return digests
 
-        // First pass: identify my posts
+        val analyzed = digests.toMutableList()
+        val cleanDeviceNames = deviceNames.map { it.lowercase().replace(" ", "-") }.toSet()
+
+        // First pass: identify my posts (from any of my devices)
         val myPostIds = digests
-            .filter { it.tags.contains("from-$cleanDeviceName") }
+            .filter { digest ->
+                cleanDeviceNames.any { deviceName ->
+                    digest.tags.contains("from-$deviceName")
+                }
+            }
             .map { it.id }
             .toSet()
 
         // Mark my posts
         for (i in analyzed.indices) {
-            if (analyzed[i].tags.contains("from-$cleanDeviceName")) {
+            val isMyPost = cleanDeviceNames.any { deviceName ->
+                analyzed[i].tags.contains("from-$deviceName")
+            }
+            if (isMyPost) {
                 analyzed[i] = analyzed[i].copy(isMyPost = true)
             }
         }
@@ -31,8 +41,11 @@ class DigestReplyDetector(private val deviceName: String) {
                 )
             }
 
-            // Also check if content mentions my device
-            if (analyzed[i].content.contains(".$cleanDeviceName")) {
+            // Also check if content mentions any of my devices
+            val mentionsMe = cleanDeviceNames.any { deviceName ->
+                analyzed[i].content.contains(".$deviceName")
+            }
+            if (mentionsMe) {
                 analyzed[i] = analyzed[i].copy(isReplyToMe = true)
             }
         }

@@ -68,11 +68,12 @@ class NotificationManager(private val context: Context) {
     fun checkForNewContent(
         digests: List<Digest>,
         pod: PodConfig,
-        deviceName: String
+        deviceNames: Set<String> // Changed from deviceName: String
     ) {
         if (!hasPermission()) return
+        if (deviceNames.isEmpty()) return
 
-        val cleanDeviceName = deviceName.lowercase().replace(" ", "-")
+        val cleanDeviceNames = deviceNames.map { it.lowercase().replace(" ", "-") }.toSet()
         val sortedDigests = digests.sortedByDescending { it.createdAt }
 
         // Check for new digests (non-replies)
@@ -88,8 +89,8 @@ class NotificationManager(private val context: Context) {
                     return@filter false
                 }
 
-                // Skip if it's our own post
-                if (digest.tags.contains("from-$cleanDeviceName")) {
+                // Skip if it's our own post (from any of our devices)
+                if (cleanDeviceNames.any { deviceName -> digest.tags.contains("from-$deviceName") }) {
                     return@filter false
                 }
 
@@ -121,12 +122,14 @@ class NotificationManager(private val context: Context) {
                 }
 
                 // Skip if it's our own reply
-                if (digest.tags.contains("from-$cleanDeviceName")) {
+                if (cleanDeviceNames.any { deviceName -> digest.tags.contains("from-$deviceName") }) {
                     return@filter false
                 }
 
-                // Check if it's a reply to us
-                val isReplyToMe = digest.content.lowercase().contains(".$cleanDeviceName")
+                // Check if it's a reply to any of our devices
+                val isReplyToMe = cleanDeviceNames.any { deviceName ->
+                    digest.content.lowercase().contains(".$deviceName")
+                }
 
                 // Skip if older than 24 hours
                 if (System.currentTimeMillis() - digest.createdAt.time > 86400000) {

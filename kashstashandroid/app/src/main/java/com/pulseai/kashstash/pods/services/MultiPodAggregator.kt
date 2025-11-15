@@ -13,9 +13,9 @@ import android.util.Log
 class MultiPodAggregator(
     private val podClient: PodClient,
     private val repository: PodRepository,
-    private val deviceName: String
+    private val deviceNames: Set<String>
 ) {
-    private val replyDetector = DigestReplyDetector(deviceName)
+    private val replyDetector = DigestReplyDetector(deviceNames)
 
     /**
      * Fetch digests from all active pods
@@ -32,17 +32,17 @@ class MultiPodAggregator(
         val results = pods.filter { it.isActive }.map { pod ->
             async {
                 try {
-                    fetchFromPod(pod, startDate, endDate, tags)
+                    val digests = fetchFromPod(pod, startDate, endDate, tags)
+                    pod.name to digests  // Return pod name with digests
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    emptyList<Digest>()
+                    pod.name to emptyList<Digest>()
                 }
             }
         }.awaitAll()
 
         // Collect results and mark which pods each digest appears in
-        results.forEachIndexed { index, digests ->
-            val podName = pods[index].name
+        results.forEach { (podName, digests) ->
             for (digest in digests) {
                 if (allDigests.containsKey(digest.id)) {
                     val existing = allDigests[digest.id]!!
@@ -55,8 +55,10 @@ class MultiPodAggregator(
             }
         }
 
-        // Analyze for replies
+        // Analyze for replies with device names
         val analyzed = replyDetector.analyzeDigests(allDigests.values.toList())
+
+        Log.d("MultiPodAggregator", "Analyzed ${analyzed.size} digests. My posts: ${analyzed.count { it.isMyPost }}, Replies to me: ${analyzed.count { it.isReplyToMe }}")
 
         // Sort by date, newest first
         analyzed.sortedByDescending { it.createdAt }

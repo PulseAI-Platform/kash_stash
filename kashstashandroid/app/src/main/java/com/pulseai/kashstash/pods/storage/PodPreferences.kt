@@ -11,7 +11,8 @@ class PodPreferences(context: Context) {
         private const val KEY_NOTIFIED_DIGEST_IDS = "notified_digest_ids"
         private const val KEY_NOTIFIED_REPLY_IDS = "notified_reply_ids"
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
-        private const val KEY_DEVICE_NAME = "device_name"
+        private const val KEY_LAST_SYNC_ERROR = "last_sync_error"
+        private const val KEY_DEVICE_NAMES = "device_names"
         private const val KEY_NODE_NAME = "node_name"
     }
 
@@ -65,10 +66,14 @@ class PodPreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC_TIME, 0)
         set(value) = prefs.edit().putLong(KEY_LAST_SYNC_TIME, value).apply()
 
+    var lastSyncError: String?
+        get() = prefs.getString(KEY_LAST_SYNC_ERROR, null)
+        set(value) = prefs.edit().putString(KEY_LAST_SYNC_ERROR, value).apply()
+
     // Device info
-    var deviceName: String?
-        get() = prefs.getString(KEY_DEVICE_NAME, null)
-        set(value) = prefs.edit().putString(KEY_DEVICE_NAME, value).apply()
+    var deviceNames: Set<String>
+        get() = prefs.getStringSet(KEY_DEVICE_NAMES, emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_DEVICE_NAMES, value).apply()
 
     var nodeName: String?
         get() = prefs.getString(KEY_NODE_NAME, null)

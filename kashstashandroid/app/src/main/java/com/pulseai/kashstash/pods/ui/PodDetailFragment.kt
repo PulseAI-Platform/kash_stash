@@ -91,8 +91,9 @@ class PodDetailFragment : Fragment() {
         prefs = PodPreferences(requireContext())
         podClient = PodClient()
 
-        val deviceName = prefs.deviceName ?: android.os.Build.MODEL
-        aggregator = MultiPodAggregator(podClient, repository, deviceName)
+        // Get device names from preferences (synced from EndpointConfigs)
+        val deviceNames = prefs.deviceNames
+        aggregator = MultiPodAggregator(podClient, repository, deviceNames)
 
         // Setup toolbar
         val toolbar = view.findViewById<MaterialToolbar>(R.id.toolbar)
@@ -144,7 +145,6 @@ class PodDetailFragment : Fragment() {
         // Load pod and digests
         loadPodAndDigests()
     }
-
     private fun setupFilterButtons(view: View) {
         // Date range button
         view.findViewById<LinearLayout>(R.id.dateRangeButton).setOnClickListener {
@@ -498,9 +498,137 @@ class PodDetailFragment : Fragment() {
     }
 
     private fun showDigestDetail(digest: Digest) {
+        val dialogView = ScrollView(requireContext()).apply {
+            setPadding(24, 24, 24, 24)
+        }
+
+        val contentLayout = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // Title (if exists)
+        if (digest.title.isNotEmpty()) {
+            contentLayout.addView(TextView(requireContext()).apply {
+                text = digest.title
+                textSize = 20f
+                setTextColor(0xFFFFFFFF.toInt())
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, 0, 0, 16)
+                setTextIsSelectable(true)
+            })
+        }
+
+        // Author info
+        val fromTag = digest.tags.firstOrNull { it.startsWith("from-") }
+        if (fromTag != null) {
+            contentLayout.addView(TextView(requireContext()).apply {
+                text = "From: ${fromTag.removePrefix("from-")}"
+                textSize = 14f
+                setTextColor(0xFF007AFF.toInt())
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, 0, 0, 12)
+                setTextIsSelectable(true)
+            })
+        }
+
+        // Main content - selectable and linkified
+        contentLayout.addView(TextView(requireContext()).apply {
+            text = digest.content
+            textSize = 16f
+            setTextColor(0xFFEEEEEE.toInt())
+            setPadding(0, 0, 0, 16)
+            setTextIsSelectable(true)
+
+            // Enable link detection
+            autoLinkMask = android.text.util.Linkify.WEB_URLS
+            linksClickable = true
+
+            // Linkify the text
+            android.text.util.Linkify.addLinks(this, android.text.util.Linkify.WEB_URLS)
+
+            // Make links clickable
+            movementMethod = android.text.method.LinkMovementMethod.getInstance()
+
+            // Highlight @mentions and #tags
+            val spannable = android.text.SpannableString(digest.content)
+
+            // Highlight @mentions
+            val mentionPattern = Regex("@[a-zA-Z0-9._-]+(\\.probes-[^\\s]+)?")
+            mentionPattern.findAll(digest.content).forEach { match ->
+                spannable.setSpan(
+                    android.text.style.ForegroundColorSpan(0xFF007AFF.toInt()),
+                    match.range.first,
+                    match.range.last + 1,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            // Highlight #tags
+            val tagPattern = Regex("#[a-zA-Z0-9_-]+")
+            tagPattern.findAll(digest.content).forEach { match ->
+                spannable.setSpan(
+                    android.text.style.ForegroundColorSpan(0xFF00D9FF.toInt()),
+                    match.range.first,
+                    match.range.last + 1,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            setText(spannable, TextView.BufferType.SPANNABLE)
+        })
+
+        // Separator line
+        contentLayout.addView(View(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                2
+            )
+            setBackgroundColor(0xFF333333.toInt())
+            val margin = LinearLayout.LayoutParams(layoutParams as LinearLayout.LayoutParams).apply {
+                setMargins(0, 0, 0, 16)
+            }
+            layoutParams = margin
+        })
+
+        // Tags section
+        if (digest.tags.isNotEmpty()) {
+            contentLayout.addView(TextView(requireContext()).apply {
+                text = "Tags:"
+                textSize = 12f
+                setTextColor(0xFF999999.toInt())
+                setPadding(0, 0, 0, 8)
+            })
+
+            contentLayout.addView(TextView(requireContext()).apply {
+                text = digest.tags.joinToString(" ") { "#$it" }
+                textSize = 14f
+                setTextColor(0xFF007AFF.toInt())
+                setPadding(0, 0, 0, 16)
+                setTextIsSelectable(true)
+            })
+        }
+
+        // Timestamp
+        contentLayout.addView(TextView(requireContext()).apply {
+            text = "Posted: ${android.text.format.DateFormat.format("MMM d, yyyy 'at' h:mm a", digest.createdAt)}"
+            textSize = 12f
+            setTextColor(0xFF666666.toInt())
+            setPadding(0, 0, 0, 8)
+        })
+
+        // Digest ID (for debugging/reference)
+        contentLayout.addView(TextView(requireContext()).apply {
+            text = "ID: ${digest.id}"
+            textSize = 10f
+            setTextColor(0xFF444444.toInt())
+            setTextIsSelectable(true)
+        })
+
+        dialogView.addView(contentLayout)
+
         AlertDialog.Builder(requireContext())
-            .setTitle(digest.title.ifEmpty { "Digest" })
-            .setMessage(digest.content)
+            .setTitle("Full Post")
+            .setView(dialogView)
             .setPositiveButton("Reply") { _, _ ->
                 showReplyDialog(digest)
             }

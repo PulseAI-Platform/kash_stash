@@ -11,11 +11,13 @@
 
     <!-- Optional: for more precise background sync scheduling -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Camera feature -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
+        android:name=".KashStashApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -63,7 +65,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- WorkManager initialization (automatic) -->
+        <!-- Disable automatic WorkManager initialization so we can do it manually -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
