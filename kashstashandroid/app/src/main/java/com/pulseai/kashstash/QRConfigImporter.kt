@@ -9,6 +9,13 @@ import com.google.zxing.*
 import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.common.GlobalHistogramBinarizer
 import com.google.zxing.qrcode.QRCodeReader
+import com.pulseai.kashstash.pods.models.PodConfig
+import com.pulseai.kashstash.pods.storage.PodDatabase
+import com.pulseai.kashstash.pods.storage.PodRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
 import kotlin.math.max
@@ -19,6 +26,7 @@ object QRConfigImporter {
         KASH_FILES,
         MOBILE_ENDPOINT,
         DESKTOP_ENDPOINT,
+        POD_CONFIG,
         UNKNOWN
     }
 
@@ -236,6 +244,7 @@ object QRConfigImporter {
                 val value = json.get(key)
                 map[key] = when (value) {
                     is JSONObject -> parseJsonObject(value)
+                    is JSONArray -> parseJsonArray(value)
                     else -> value
                 }
             }
@@ -256,6 +265,7 @@ object QRConfigImporter {
             val value = json.get(key)
             map[key] = when (value) {
                 is JSONObject -> parseJsonObject(value)
+                is JSONArray -> parseJsonArray(value)
                 else -> value
             }
         }
@@ -263,10 +273,30 @@ object QRConfigImporter {
     }
 
     /**
+     * Parse JSONArray to List
+     */
+    private fun parseJsonArray(jsonArray: JSONArray): List<Any> {
+        val list = mutableListOf<Any>()
+        for (i in 0 until jsonArray.length()) {
+            val value = jsonArray.get(i)
+            list.add(when (value) {
+                is JSONObject -> parseJsonObject(value)
+                is JSONArray -> parseJsonArray(value)
+                else -> value
+            })
+        }
+        return list
+    }
+
+    /**
      * Detect what type of configuration this is
      */
     fun detectConfigType(config: Map<String, Any>): ConfigType {
         return when {
+            // Check for Pod config - MUST be first!
+            config.containsKey("entrance_url") &&
+                    config.containsKey("preshared_key") -> ConfigType.POD_CONFIG
+
             // Check for Kash Files config
             config["type"] == "kashFiles" -> ConfigType.KASH_FILES
 
@@ -280,6 +310,75 @@ object QRConfigImporter {
 
             else -> ConfigType.UNKNOWN
         }
+    }
+
+    /**
+     * Extract Pod configuration - FIXED VERSION
+     */
+    fun extractPodConfig(config: Map<String, Any>): PodConfig? {
+        return try {
+            val name = config["name"] as? String ?: "Imported Pod"
+            val entranceUrl = config["entrance_url"] as? String
+            val presharedKey = config["preshared_key"] as? String
+
+            // Return null if required fields are missing
+            if (entranceUrl == null || presharedKey == null) {
+                return null
+            }
+
+            // Fix: Handle tags very defensively
+            val tagsList = try {
+                when (val tagsRaw = config["tags"]) {
+                    is List<*> -> {
+                        // Filter and convert to String safely
+                        tagsRaw.filterIsInstance<String>()
+                    }
+                    is ArrayList<*> -> {
+                        // Handle ArrayList specifically
+                        tagsRaw.filterIsInstance<String>()
+                    }
+                    else -> emptyList()
+                }
+            } catch (e: Exception) {
+                // If anything goes wrong with tags, just use empty list
+                emptyList<String>()
+            }
+
+            PodConfig(
+                name = name,
+                entranceNodeUrl = entranceUrl,
+                presharedKey = presharedKey,
+                cachedTags = tagsList,
+                isActive = true
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Import Pod config to database
+     */
+    fun importPodConfig(context: Context, podConfig: PodConfig) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val database = PodDatabase.getDatabase(context)
+                val repository = PodRepository(database.podDao())
+                repository.insertPod(podConfig)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * Validate Pod config has required fields
+     */
+    fun validatePodConfig(podConfig: PodConfig): Boolean {
+        return podConfig.name.isNotBlank() &&
+                podConfig.entranceNodeUrl.isNotBlank() &&
+                podConfig.presharedKey.isNotBlank()
     }
 
     /**
@@ -360,16 +459,16 @@ class RGBLuminanceSource(
 ) : LuminanceSource(width, height) {
 
     override fun getRow(y: Int, row: ByteArray?): ByteArray {
-        val row = row ?: ByteArray(width)
+        val newRow = row ?: ByteArray(width)
         for (x in 0 until width) {
             val pixel = pixels[y * width + x]
             val r = (pixel shr 16) and 0xff
             val g = (pixel shr 8) and 0xff
             val b = pixel and 0xff
             // Calculate luminance
-            row[x] = ((r + g * 2 + b) / 4).toByte()
+            newRow[x] = ((r + g * 2 + b) / 4).toByte()
         }
-        return row
+        return newRow
     }
 
     override fun getMatrix(): ByteArray {

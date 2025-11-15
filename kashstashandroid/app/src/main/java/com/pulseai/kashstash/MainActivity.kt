@@ -10,6 +10,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -17,12 +18,18 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
+import com.pulseai.kashstash.R  // ADD THIS LINE
 import com.pulseai.kashstash.databinding.ActivityMainBinding
+import com.pulseai.kashstash.pods.storage.PodDatabase
+import com.pulseai.kashstash.pods.storage.PodRepository
+import com.pulseai.kashstash.pods.ui.PodsListFragment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,7 +37,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
-import kotlinx.coroutines.delay
 
 class MainActivity : AppCompatActivity() {
 
@@ -39,6 +45,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var repository: PodRepository
+    private lateinit var homeContent: View
+    private lateinit var fragmentContainer: View
     private val recentTagsManager = RecentTagsManager()
     private var tempPhotoUri: Uri? = null
     private var pendingCameraAction: (() -> Unit)? = null
@@ -67,9 +76,23 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
+        // Initialize Pods repository
+        val database = PodDatabase.getDatabase(this)
+        repository = PodRepository(database.podDao())
+
+        homeContent = findViewById(R.id.homeContent)
+        fragmentContainer = findViewById(R.id.fragment_container)
+
         updateCurrentInstancesText()
         setupButtons()
+        setupPodsButtons()
+        updatePodsDisplay()
         handleShareIntent(intent)
+
+        // Listen for back stack changes
+        supportFragmentManager.addOnBackStackChangedListener {
+            updateUIVisibility()
+        }
     }
 
     private fun setupButtons() {
@@ -113,9 +136,59 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupPodsButtons() {
+        // Main pods button
+
+        // Manage pods button in header
+        findViewById<Button>(R.id.managePodsButton).setOnClickListener {
+            navigateToPods()
+        }
+    }
+
+    private fun navigateToPods() {
+        val fragment = PodsListFragment.newInstance()
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack("pods")
+            .commit()
+
+        // Show fragment container, hide home content
+        fragmentContainer.visibility = View.VISIBLE
+        homeContent.visibility = View.GONE
+    }
+
+    private fun updateUIVisibility() {
+        val isFragmentShown = supportFragmentManager.backStackEntryCount > 0
+        fragmentContainer.visibility = if (isFragmentShown) View.VISIBLE else View.GONE
+        homeContent.visibility = if (isFragmentShown) View.GONE else View.VISIBLE
+    }
+
+    private fun updatePodsDisplay() {
+        lifecycleScope.launch {
+            repository.getAllPods().collect { pods ->
+                val podsText = findViewById<TextView>(R.id.currentPodsView)
+                val activeCount = pods.count { it.isActive }
+
+                podsText.text = when {
+                    pods.isEmpty() -> "Pods: (none)"
+                    activeCount == 0 -> "Pods: ${pods.size} configured"
+                    else -> "Pods: ${pods.size} configured ($activeCount active)"
+                }
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShareIntent(intent)
+    }
+
+    override fun onBackPressed() {
+        if (supportFragmentManager.backStackEntryCount > 0) {
+            supportFragmentManager.popBackStack()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     // ==== UI UPDATE METHODS ====
@@ -563,6 +636,9 @@ class MainActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     when (configType) {
+                        QRConfigImporter.ConfigType.POD_CONFIG -> {
+                            handlePodImport(decodedConfig)
+                        }
                         QRConfigImporter.ConfigType.KASH_FILES -> {
                             handleKashFilesImport(decodedConfig)
                         }
@@ -588,6 +664,43 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun handlePodImport(config: Map<String, Any>) {
+        val podConfig = QRConfigImporter.extractPodConfig(config)
+
+        if (podConfig == null || !QRConfigImporter.validatePodConfig(podConfig)) {
+            AlertDialog.Builder(this)
+                .setTitle("Invalid Configuration")
+                .setMessage("The QR code doesn't contain a valid Pod configuration.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val tagsPreview = if (podConfig.cachedTags.isNotEmpty()) {
+            podConfig.cachedTags.joinToString(", ")
+        } else {
+            "(none)"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Import Pod")
+            .setMessage("""
+                Add Pod?
+                
+                Name: ${podConfig.name}
+                URL: ${podConfig.entranceNodeUrl}
+                Key: ${podConfig.presharedKey.take(10)}...
+                Tags: $tagsPreview
+            """.trimIndent())
+            .setPositiveButton("Add") { _, _ ->
+                QRConfigImporter.importPodConfig(this, podConfig)
+                Snackbar.make(binding.root, "✅ Pod imported: ${podConfig.name}", Snackbar.LENGTH_LONG).show()
+                updatePodsDisplay()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun handleKashFilesImport(config: Map<String, Any>) {
@@ -800,7 +913,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ==== SHARED LINK WORKFLOW ====
-// ==== SHARED LINK WORKFLOW ====
     private fun handleSharedLink(linkText: String) {
         val config = ConfigManager.load(this)
         val hasEndpoint = config.endpoints.isNotEmpty()
@@ -866,6 +978,7 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
     }
+
     // ==== SHARED IMAGE WORKFLOW ====
     private fun handleSharedImage(imageUri: Uri) {
         val config = ConfigManager.load(this)
@@ -1120,8 +1233,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ==== UPLOAD METHODS ====
-
-    // Endpoint upload (unchanged)
     private fun uploadToEndpoint(
         fileData: ByteArray,
         filename: String,
@@ -1139,8 +1250,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     return@launch
                 }
-
-                val effectiveTags = appendDeviceToTags(tags, ep.device)
+                val fromTag = "from-$ep.device"
+                val effectiveTags = appendDeviceToTags(tags, ep.device,)
                 val base64Content = Base64.encodeToString(fileData, Base64.NO_WRAP)
 
                 val payload = """
@@ -1186,7 +1297,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Kash Files only (link/text)
     private fun uploadToKashFilesOnly(
         fileData: ByteArray,
         filename: String,
@@ -1219,7 +1329,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Link upload to both
     private fun uploadLinkToBoth(
         fileData: ByteArray,
         filename: String,
@@ -1235,14 +1344,11 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // Upload to Kash Files first
             val client = KashFilesClient(kf)
             val result = client.uploadFile(filename, fileData, "text/plain", tags, fullText)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-
-                // Create link digest
                 val linkDigest = """
                 Link saved to Kash Files
                 URL: $fullUrl
@@ -1251,15 +1357,7 @@ class MainActivity : AppCompatActivity() {
                 """.trimIndent()
 
                 val linkFilename = "link_${System.currentTimeMillis()}.txt"
-
-                // Upload link digest to endpoint
-                uploadToEndpoint(
-                    linkDigest.toByteArray(),
-                    linkFilename,
-                    "text/plain",
-                    tags,
-                    linkDigest
-                )
+                uploadToEndpoint(linkDigest.toByteArray(), linkFilename, "text/plain", tags, linkDigest)
 
                 Snackbar.make(
                     binding.root,
@@ -1272,7 +1370,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Image to Kash Files only (with caption)
     private fun uploadImageToKashFilesOnly(
         imageBytes: ByteArray,
         filename: String,
@@ -1293,8 +1390,6 @@ class MainActivity : AppCompatActivity() {
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-
-                // Create text digest with link and caption
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
@@ -1310,14 +1405,7 @@ class MainActivity : AppCompatActivity() {
                     """.trimIndent()
 
                     val linkFilename = "img_link_${System.currentTimeMillis()}.txt"
-
-                    uploadToEndpoint(
-                        linkText.toByteArray(),
-                        linkFilename,
-                        "text/plain",
-                        enhancedTags,
-                        linkText
-                    )
+                    uploadToEndpoint(linkText.toByteArray(), linkFilename, "text/plain", enhancedTags, linkText)
 
                     Snackbar.make(
                         binding.root,
@@ -1337,7 +1425,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Image to both
     private fun uploadImageToBoth(
         imageBytes: ByteArray,
         filename: String,
@@ -1353,17 +1440,14 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // Upload to Kash Files first
             val client = KashFilesClient(kf)
             val result = client.uploadFile(filename, imageBytes, "image/jpeg", tags, caption)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
-                // Create link note
                 val linkNote = """
                 Image: $filename
                 Kash Files URL: $fullUrl
@@ -1372,20 +1456,9 @@ class MainActivity : AppCompatActivity() {
                 """.trimIndent()
 
                 val linkFilename = "link_${filenameTag}_${Instant.now().epochSecond}.txt"
+                uploadToEndpoint(linkNote.toByteArray(), linkFilename, "text/plain", enhancedTags, linkNote)
 
-                // Upload link note FIRST
-                uploadToEndpoint(
-                    linkNote.toByteArray(),
-                    linkFilename,
-                    "text/plain",
-                    enhancedTags,
-                    linkNote
-                )
-
-                // Delay to ensure order
                 delay(100)
-
-                // Upload actual image for AI processing
                 uploadToEndpoint(imageBytes, filename, "image/jpeg", enhancedTags, caption)
 
                 Snackbar.make(
@@ -1399,7 +1472,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Raw file to Kash Files only
     private fun uploadRawFileToKashFilesOnly(
         fileBytes: ByteArray,
         filename: String,
@@ -1432,7 +1504,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Raw file to both
     private fun uploadRawFileToBoth(
         fileBytes: ByteArray,
         filename: String,
@@ -1449,17 +1520,14 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // Upload to Kash Files
             val client = KashFilesClient(kf)
             val result = client.uploadFile(filename, fileBytes, mimeType, tags, caption)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
-                // Create link digest
                 val linkDigest = """
                 File: $filename
                 Type: $mimeType
@@ -1469,15 +1537,7 @@ class MainActivity : AppCompatActivity() {
                 """.trimIndent()
 
                 val linkFilename = "file_link_${filenameTag}_${Instant.now().epochSecond}.txt"
-
-                // Upload link digest to endpoint
-                uploadToEndpoint(
-                    linkDigest.toByteArray(),
-                    linkFilename,
-                    "text/plain",
-                    enhancedTags,
-                    linkDigest
-                )
+                uploadToEndpoint(linkDigest.toByteArray(), linkFilename, "text/plain", enhancedTags, linkDigest)
 
                 Snackbar.make(
                     binding.root,
@@ -1493,15 +1553,26 @@ class MainActivity : AppCompatActivity() {
     private fun appendDeviceToTags(tags: String, device: String?): String {
         val normalizedDevice = device?.trim()
         if (!normalizedDevice.isNullOrBlank()) {
-            val tagList = tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-            if (tagList.any { it.equals(normalizedDevice, ignoreCase = true) }) {
-                return tags
+            val tagList = tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+
+            // Create clean device name for tags
+            val cleanDeviceName = normalizedDevice.lowercase().replace(" ", "-")
+
+            // Add plain device name if not present
+            if (!tagList.any { it.equals(cleanDeviceName, ignoreCase = true) }) {
+                tagList.add(cleanDeviceName)
             }
-            return (tagList + normalizedDevice).joinToString(",")
+
+            // Add from-device tag if not present
+            val fromDeviceTag = "from-$cleanDeviceName"
+            if (!tagList.any { it.equals(fromDeviceTag, ignoreCase = true) }) {
+                tagList.add(fromDeviceTag)
+            }
+
+            return tagList.joinToString(",")
         }
         return tags
     }
-
     // ==== MENU ====
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)

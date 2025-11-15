@@ -9,216 +9,262 @@
     android:background="#000000"
     tools:context=".MainActivity">
 
-    <!-- Toolbar at the very top -->
-    <com.google.android.material.appbar.AppBarLayout
-        android:id="@+id/appBarLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:fitsSystemWindows="true"
-        android:layout_gravity="top">
-
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="#111314"
-            app:titleTextColor="#FFFFFF"
-            android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <!-- Scrollable content below toolbar -->
-    <androidx.core.widget.NestedScrollView
+    <!-- Main Home Content (this will be hidden when fragments are shown) -->
+    <LinearLayout
+        android:id="@+id/homeContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:fillViewport="true"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        android:orientation="vertical">
 
-        <LinearLayout
+        <!-- Toolbar at the very top -->
+        <com.google.android.material.appbar.AppBarLayout
+            android:id="@+id/appBarLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:fitsSystemWindows="true">
 
-            <!-- Kash Stash Title and Instance Info Section -->
-            <LinearLayout
-                android:id="@+id/instances_section"
+            <com.google.android.material.appbar.MaterialToolbar
+                android:id="@+id/toolbar"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="?attr/actionBarSize"
                 android:background="#111314"
-                android:orientation="vertical"
-                android:elevation="4dp"
-                android:paddingBottom="24dp">
+                app:titleTextColor="#FFFFFF"
+                android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
+        </com.google.android.material.appbar.AppBarLayout>
 
-                <!-- KASH STASH TITLE -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Kash Stash"
-                    android:textSize="28sp"
-                    android:textColor="#FFFFFF"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
-                    android:paddingTop="24dp"
-                    android:paddingBottom="20dp" />
+        <!-- Scrollable content below toolbar -->
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
 
-                <!-- Endpoint Row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingBottom="8dp"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:id="@+id/currentEndpointView"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Endpoint: (none)"
-                        android:textSize="17sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="sans-serif-medium" />
-
-                    <Button
-                        android:id="@+id/manageEndpointsButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:text="Manage"
-                        android:backgroundTint="#222227"
-                        android:textColor="#FFFFFF"
-                        android:textSize="12sp"
-                        android:fontFamily="sans-serif-medium"/>
-                </LinearLayout>
-
-                <!-- Kash Files Row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:id="@+id/currentKashFilesView"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Kash Files: (none)"
-                        android:textSize="17sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="sans-serif-medium" />
-
-                    <Button
-                        android:id="@+id/manageKashFilesButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:text="Manage"
-                        android:backgroundTint="#222227"
-                        android:textColor="#FFFFFF"
-                        android:textSize="12sp"
-                        android:fontFamily="sans-serif-medium"/>
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Main Action Buttons -->
             <LinearLayout
-                android:id="@+id/mainActionsColumn"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:gravity="center_horizontal"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:paddingTop="32dp"
-                android:paddingBottom="32dp">
+                android:orientation="vertical">
 
-                <!-- Go to Portal -->
-                <Button
-                    android:id="@+id/portalButton"
+                <!-- Kash Stash Title and Instance Info Section -->
+                <LinearLayout
+                    android:id="@+id/instances_section"
                     android:layout_width="match_parent"
-                    android:layout_height="68dp"
-                    android:layout_marginBottom="16dp"
-                    android:maxWidth="400dp"
-                    android:backgroundTint="#222227"
-                    android:drawableStart="@drawable/outline_3p_24"
-                    android:drawablePadding="9dp"
-                    android:elevation="1dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:paddingLeft="18dp"
-                    android:paddingTop="4dp"
-                    android:paddingRight="18dp"
-                    android:paddingBottom="4dp"
-                    android:text="Go to Portal"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:layout_height="wrap_content"
+                    android:background="#111314"
+                    android:orientation="vertical"
+                    android:elevation="4dp"
+                    android:paddingBottom="24dp">
 
-                <!-- Go to My Node -->
-                <Button
-                    android:id="@+id/goToNodeButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="68dp"
-                    android:layout_marginBottom="16dp"
-                    android:maxWidth="400dp"
-                    android:backgroundTint="#222227"
-                    android:drawableStart="@drawable/outline_3p_24"
-                    android:drawablePadding="9dp"
-                    android:elevation="1dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:paddingLeft="18dp"
-                    android:paddingTop="4dp"
-                    android:paddingRight="18dp"
-                    android:paddingBottom="4dp"
-                    android:text="Go to My Node"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    <!-- KASH STASH TITLE -->
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Kash Stash"
+                        android:textSize="28sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="sans-serif-medium"
+                        android:gravity="center"
+                        android:paddingTop="24dp"
+                        android:paddingBottom="20dp" />
 
-                <!-- Pulse Blog -->
-                <Button
-                    android:id="@+id/blogButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="68dp"
-                    android:layout_marginBottom="16dp"
-                    android:maxWidth="400dp"
-                    android:backgroundTint="#222227"
-                    android:drawableStart="@drawable/outline_3p_24"
-                    android:drawablePadding="9dp"
-                    android:elevation="1dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:paddingLeft="18dp"
-                    android:paddingTop="4dp"
-                    android:paddingRight="18dp"
-                    android:paddingBottom="4dp"
-                    android:text="Pulse Blog"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    <!-- Endpoint Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="8dp"
+                        android:gravity="center_vertical">
 
-                <!-- Import from QR -->
-                <Button
-                    android:id="@+id/importQrButton"
+                        <TextView
+                            android:id="@+id/currentEndpointView"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Endpoint: (none)"
+                            android:textSize="17sp"
+                            android:textColor="#FFFFFF"
+                            android:fontFamily="sans-serif-medium" />
+
+                        <Button
+                            android:id="@+id/manageEndpointsButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:text="Manage"
+                            android:backgroundTint="#222227"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif-medium"/>
+                    </LinearLayout>
+
+                    <!-- Kash Files Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="8dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:id="@+id/currentKashFilesView"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Kash Files: (none)"
+                            android:textSize="17sp"
+                            android:textColor="#FFFFFF"
+                            android:fontFamily="sans-serif-medium" />
+
+                        <Button
+                            android:id="@+id/manageKashFilesButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:text="Manage"
+                            android:backgroundTint="#222227"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif-medium"/>
+                    </LinearLayout>
+
+                    <!-- Pods Row (NEW) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:id="@+id/currentPodsView"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Pods: (none)"
+                            android:textSize="17sp"
+                            android:textColor="#FFFFFF"
+                            android:fontFamily="sans-serif-medium" />
+
+                        <Button
+                            android:id="@+id/managePodsButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:text="Manage"
+                            android:backgroundTint="#222227"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif-medium"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Main Action Buttons -->
+                <LinearLayout
+                    android:id="@+id/mainActionsColumn"
                     android:layout_width="match_parent"
-                    android:layout_height="68dp"
-                    android:maxWidth="400dp"
-                    android:backgroundTint="#222227"
-                    android:elevation="1dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:paddingLeft="18dp"
-                    android:paddingTop="4dp"
-                    android:paddingRight="18dp"
-                    android:paddingBottom="4dp"
-                    android:text="Import from QR"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="32dp"
+                    android:paddingBottom="32dp">
+
+
+                    <!-- Go to Portal -->
+                    <Button
+                        android:id="@+id/portalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="68dp"
+                        android:layout_marginBottom="16dp"
+                        android:maxWidth="400dp"
+                        android:backgroundTint="#222227"
+                        android:drawableStart="@drawable/outline_3p_24"
+                        android:drawablePadding="9dp"
+                        android:elevation="1dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingLeft="18dp"
+                        android:paddingTop="4dp"
+                        android:paddingRight="18dp"
+                        android:paddingBottom="4dp"
+                        android:text="Go to Portal"
+                        android:textColor="#FFFFFF"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <!-- Go to My Node -->
+                    <Button
+                        android:id="@+id/goToNodeButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="68dp"
+                        android:layout_marginBottom="16dp"
+                        android:maxWidth="400dp"
+                        android:backgroundTint="#222227"
+                        android:drawableStart="@drawable/outline_3p_24"
+                        android:drawablePadding="9dp"
+                        android:elevation="1dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingLeft="18dp"
+                        android:paddingTop="4dp"
+                        android:paddingRight="18dp"
+                        android:paddingBottom="4dp"
+                        android:text="Go to My Node"
+                        android:textColor="#FFFFFF"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <!-- Pulse Blog -->
+                    <Button
+                        android:id="@+id/blogButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="68dp"
+                        android:layout_marginBottom="16dp"
+                        android:maxWidth="400dp"
+                        android:backgroundTint="#222227"
+                        android:drawableStart="@drawable/outline_3p_24"
+                        android:drawablePadding="9dp"
+                        android:elevation="1dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingLeft="18dp"
+                        android:paddingTop="4dp"
+                        android:paddingRight="18dp"
+                        android:paddingBottom="4dp"
+                        android:text="Pulse Blog"
+                        android:textColor="#FFFFFF"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <!-- Import from QR -->
+                    <Button
+                        android:id="@+id/importQrButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="68dp"
+                        android:maxWidth="400dp"
+                        android:backgroundTint="#222227"
+                        android:elevation="1dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingLeft="18dp"
+                        android:paddingTop="4dp"
+                        android:paddingRight="18dp"
+                        android:paddingBottom="4dp"
+                        android:text="Import from QR"
+                        android:textColor="#FFFFFF"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
 
             </LinearLayout>
 
-        </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
 
-    </androidx.core.widget.NestedScrollView>
+    <!-- Fragment Container (for Pods screens) -->
+    <FrameLayout
+        android:id="@+id/fragment_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
