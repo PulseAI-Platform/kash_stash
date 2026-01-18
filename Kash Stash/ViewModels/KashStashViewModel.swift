@@ -170,4 +170,18 @@ class KashStashViewModel: ObservableObject {
     var hasPods: Bool {
         podCount > 0
     }
+    // Recent prompts
+    func addRecentPrompt(_ prompt: String) {
+        RecentPromptsManager.addPrompt(prompt, to: &config)
+        save()
+    }
+
+    var recentPromptsList: [String] {
+        RecentPromptsManager.getRecentPromptsString(from: config)
+    }
+
+    func deleteRecentPrompt(_ prompt: String) {
+        RecentPromptsManager.deletePrompt(prompt, from: &config)
+        save()
+    }
 }

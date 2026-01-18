@@ -43,7 +43,10 @@
 		C95895E52EB81DEE00E62CE5 /* Exceptions for "Kash Stash" folder in "KashStashShare" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Models/PodModels.swift,
+				Models/RecentPrompt.swift,
 				Models/RecentTag.swift,
+				Services/RecentPromptsManager.swift,
 				Services/RecentTagsManager.swift,
 			);
 			target = C976EDCF2E9CBE02001580C3 /* KashStashShare */;

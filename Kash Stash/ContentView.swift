@@ -12,6 +12,7 @@ extension View {
 struct ContentView: View {
     @StateObject var viewModel = KashStashViewModel()
     @State private var showQRImport = false
+    @State private var showQRTextCapture = false
     @State private var podConfigs: [PodConfig] = []
 
     var body: some View {
@@ -147,7 +148,7 @@ struct ContentView: View {
                                 .cornerRadius(12)
                             }
                             
-                            // Pods info - NEW SECTION
+                            // Pods info
                             if !podConfigs.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
@@ -211,6 +212,25 @@ struct ContentView: View {
                             .cornerRadius(10)
                         }
                         .accessibilityHint("Import configuration from QR code")
+                        
+                        // Scan & Upload Button
+                        Button(action: {
+                            showQRTextCapture = true
+                        }) {
+                            HStack {
+                                Image(systemName: "barcode.viewfinder")
+                                    .font(.title3)
+                                Text("Scan & Upload")
+                                    .font(.headline)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.orange)
+                            .cornerRadius(10)
+                        }
+                        .accessibilityHint("Scan barcodes or QR codes and upload as text")
                         
                         NavigationLink(destination: SwitchEndpointView(viewModel: viewModel)) {
                             HStack {
@@ -282,7 +302,6 @@ struct ContentView: View {
                         }
                         .accessibilityHint("Manage Kash Files cloud storage")
                         
-                        // NEW - Pods Management Button
                         NavigationLink(destination: PodsListView()) {
                             HStack {
                                 Image(systemName: "bubble.left.and.bubble.right.fill")
@@ -320,9 +339,15 @@ struct ContentView: View {
                     // 4. External link buttons
                     VStack(spacing: 16) {
                         Button(action: {
+                            #if os(iOS)
                             if let url = URL(string: "https://blog.pulseaiplatform.com") {
                                 UIApplication.shared.open(url)
                             }
+                            #elseif os(macOS)
+                            if let url = URL(string: "https://blog.pulseaiplatform.com") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            #endif
                         }) {
                             HStack {
                                 Image(systemName: "globe")
@@ -344,9 +369,15 @@ struct ContentView: View {
                         .accessibilityHint("Opens Pulse AI blog in browser")
                         
                         Button(action: {
+                            #if os(iOS)
                             if let url = URL(string: "https://pulseaiplatform.com") {
                                 UIApplication.shared.open(url)
                             }
+                            #elseif os(macOS)
+                            if let url = URL(string: "https://pulseaiplatform.com") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            #endif
                         }) {
                             HStack {
                                 Image(systemName: "sparkles")
@@ -371,7 +402,11 @@ struct ContentView: View {
                             if let nodeName = viewModel.currentEndpoint?.nodeName,
                                !nodeName.isEmpty,
                                let url = URL(string: "https://pulse-\(nodeName).xyzpulseinfra.com") {
+                                #if os(iOS)
                                 UIApplication.shared.open(url)
+                                #elseif os(macOS)
+                                NSWorkspace.shared.open(url)
+                                #endif
                             }
                         }) {
                             HStack {
@@ -399,7 +434,9 @@ struct ContentView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 32)
                 .frame(maxWidth: 520)
+                #if os(iOS)
                 .frame(minHeight: UIScreen.main.bounds.height * 0.8, alignment: .top)
+                #endif
                 .navigationTitle("Kash Stash")
             }
             .background(Color(.systemGroupedBackground).edgesIgnoringSafeArea(.all))
@@ -407,6 +444,9 @@ struct ContentView: View {
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showQRImport) {
             QRImportView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showQRTextCapture) {
+            QRTextCaptureView() // ✅ FIXED - No parameters needed
         }
         .onAppear {
             // Load pod configs

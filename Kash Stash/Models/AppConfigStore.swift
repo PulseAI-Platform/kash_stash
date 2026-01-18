@@ -12,6 +12,7 @@ struct AppConfig: Codable, Equatable {
     var kashFiles: [KashFilesConfig] = []
     var lastUsedKashFilesId: UUID?
     var recentTags: [RecentTag] = []
+    var recentPrompts: [RecentPrompt] = []
     var defaultUploadDestination: UploadDestination = .endpointOnly
     
     // New pod-related fields

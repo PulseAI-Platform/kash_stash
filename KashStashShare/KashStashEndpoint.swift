@@ -1,6 +1,5 @@
 import Foundation
 
-// Copy all the shared models here
 struct KashStashEndpoint: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
@@ -10,14 +9,13 @@ struct KashStashEndpoint: Codable, Identifiable, Equatable {
     var probeId: String
     var keepScreenshots: Bool
     
-    // NEW FIELDS for config digest support (not used in share extension)
     var configDigestId: String?
     var configDigestTags: String = "agent-config"
     var configCacheMinutes: Int = 5
 }
 
 struct KashFilesConfig: Codable, Identifiable, Equatable {
-    let id = UUID()
+    var id: UUID = UUID()
     var name: String
     var url: String
     var key: String
@@ -27,8 +25,6 @@ struct KashFilesConfig: Codable, Identifiable, Equatable {
         url.hasSuffix("/") ? String(url.dropLast()) : url
     }
 }
-
-// REMOVED RecentTag - it's now in the shared RecentTag.swift file
 
 enum UploadDestination: String, Codable, CaseIterable {
     case endpointOnly = "Endpoint Only"
@@ -40,12 +36,15 @@ struct AppConfig: Codable, Equatable {
     var endpoints: [KashStashEndpoint]
     var lastUsedEndpoint: UUID?
     
-    // NEW FIELDS
     var kashFiles: [KashFilesConfig] = []
     var lastUsedKashFilesId: UUID?
     var recentTags: [RecentTag] = []
+    var recentPrompts: [RecentPrompt] = []
     var defaultUploadDestination: UploadDestination = .endpointOnly
     
-    // Migration support
-    var configVersion: Int = 2
+    var podConfigs: [PodConfig] = []
+    var lastUsedPodId: UUID?
+    var deviceName: String = ""
+    
+    var configVersion: Int = 3
 }
