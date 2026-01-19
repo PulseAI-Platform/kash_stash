@@ -9,14 +9,14 @@
     android:background="#000000"
     tools:context=".MainActivity">
 
-    <!-- Main Home Content (this will be hidden when fragments are shown) -->
+    <!-- Main Home Content -->
     <LinearLayout
         android:id="@+id/homeContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Toolbar at the very top -->
+        <!-- Toolbar -->
         <com.google.android.material.appbar.AppBarLayout
             android:id="@+id/appBarLayout"
             android:layout_width="match_parent"
@@ -32,7 +32,7 @@
                 android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
         </com.google.android.material.appbar.AppBarLayout>
 
-        <!-- Scrollable content below toolbar -->
+        <!-- Scrollable content -->
         <androidx.core.widget.NestedScrollView
             android:layout_width="match_parent"
             android:layout_height="match_parent"
@@ -43,7 +43,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- Kash Stash Title and Instance Info Section -->
+                <!-- Title and Instance Info Section -->
                 <LinearLayout
                     android:id="@+id/instances_section"
                     android:layout_width="match_parent"
@@ -53,7 +53,6 @@
                     android:elevation="4dp"
                     android:paddingBottom="24dp">
 
-                    <!-- KASH STASH TITLE -->
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -127,7 +126,7 @@
                             android:fontFamily="sans-serif-medium"/>
                     </LinearLayout>
 
-                    <!-- Pods Row (NEW) -->
+                    <!-- Pods Row -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -170,8 +169,7 @@
                     android:paddingTop="32dp"
                     android:paddingBottom="32dp">
 
-
-                    <!-- Go to Portal -->
+                    <!-- Portal -->
                     <Button
                         android:id="@+id/portalButton"
                         android:layout_width="match_parent"
@@ -192,7 +190,7 @@
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
-                    <!-- Go to My Node -->
+                    <!-- My Node -->
                     <Button
                         android:id="@+id/goToNodeButton"
                         android:layout_width="match_parent"
@@ -213,7 +211,7 @@
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
-                    <!-- Pulse Blog -->
+                    <!-- Blog -->
                     <Button
                         android:id="@+id/blogButton"
                         android:layout_width="match_parent"
@@ -234,9 +232,28 @@
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
-                    <!-- Import from QR -->
+                    <!-- Import Config -->
                     <Button
                         android:id="@+id/importQrButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="68dp"
+                        android:layout_marginBottom="16dp"
+                        android:maxWidth="400dp"
+                        android:backgroundTint="#222227"
+                        android:elevation="1dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingLeft="18dp"
+                        android:paddingTop="4dp"
+                        android:paddingRight="18dp"
+                        android:paddingBottom="4dp"
+                        android:text="Import Config QR"
+                        android:textColor="#FFFFFF"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <!-- GIL! HERE IT IS! THE NEW SCAN BUTTON! -->
+                    <Button
+                        android:id="@+id/scanGenericQrButton"
                         android:layout_width="match_parent"
                         android:layout_height="68dp"
                         android:maxWidth="400dp"
@@ -247,19 +264,17 @@
                         android:paddingTop="4dp"
                         android:paddingRight="18dp"
                         android:paddingBottom="4dp"
-                        android:text="Import from QR"
+                        android:text="Scan Barcode / QR"
                         android:textColor="#FFFFFF"
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
                 </LinearLayout>
-
             </LinearLayout>
-
         </androidx.core.widget.NestedScrollView>
     </LinearLayout>
 
-    <!-- Fragment Container (for Pods screens) -->
+    <!-- Fragment Container -->
     <FrameLayout
         android:id="@+id/fragment_container"
         android:layout_width="match_parent"

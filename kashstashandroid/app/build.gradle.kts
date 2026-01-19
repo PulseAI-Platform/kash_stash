@@ -6,14 +6,14 @@ plugins {
 
 android {
     namespace = "com.pulseai.kashstash"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.pulseai.kashstash"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        targetSdk = 35
+        versionCode = 7
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -67,4 +67,7 @@ dependencies {
     // WorkManager for background sync
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("io.coil-kt:coil:2.5.0")
+
+    //scanner stuff
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

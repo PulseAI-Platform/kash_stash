@@ -24,7 +24,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.google.android.material.snackbar.Snackbar
-import com.pulseai.kashstash.R
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.pulseai.kashstash.databinding.ActivityMainBinding
 import com.pulseai.kashstash.pods.models.Digest
 import com.pulseai.kashstash.pods.models.PodConfig
@@ -63,7 +63,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var repository: PodRepository
     private lateinit var homeContent: View
     private lateinit var fragmentContainer: View
+
+    // MANAGERS
     private val recentTagsManager = RecentTagsManager()
+    private lateinit var savedPromptsManager: SavedPromptsManager
+
     private var tempPhotoUri: Uri? = null
     private var pendingCameraAction: (() -> Unit)? = null
 
@@ -73,21 +77,20 @@ class MainActivity : AppCompatActivity() {
     ) { granted ->
         if (granted) {
             Toast.makeText(this, "Notifications enabled!", Toast.LENGTH_SHORT).show()
-            // Sync device names and start background sync if configured
             BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
         } else {
             Toast.makeText(this, "Notifications disabled. You can enable them in Settings.", Toast.LENGTH_LONG).show()
         }
     }
 
-    // QR image picker from gallery
+    // QR image picker from gallery (Config Import)
     private val qrImagePicker = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { importQRConfig(it) }
     }
 
-    // Camera launcher for QR capture
+    // Camera launcher for QR capture (Config Import)
     private val takePictureLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success: Boolean ->
@@ -104,6 +107,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
+        // Initialize Managers
+        savedPromptsManager = SavedPromptsManager(this)
+
         // Initialize Pods repository
         val database = PodDatabase.getDatabase(this)
         repository = PodRepository(database.podDao())
@@ -117,13 +123,9 @@ class MainActivity : AppCompatActivity() {
         updatePodsDisplay()
         handleShareIntent(intent)
 
-        // Check and request notification permission if needed (Android 13+)
         checkNotificationPermission()
-
-        // Sync device names from endpoints and potentially start background sync
         BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
 
-        // Listen for back stack changes
         supportFragmentManager.addOnBackStackChangedListener {
             updateUIVisibility()
         }
@@ -132,7 +134,6 @@ class MainActivity : AppCompatActivity() {
     private fun checkNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (!NotificationPermissionHelper.isPermissionGranted(this)) {
-                // Check if we should show rationale
                 if (NotificationPermissionHelper.shouldShowRationale(this)) {
                     AlertDialog.Builder(this)
                         .setTitle("Enable Notifications")
@@ -143,8 +144,6 @@ class MainActivity : AppCompatActivity() {
                         .setNegativeButton("Not Now", null)
                         .show()
                 } else {
-                    // First time asking or user selected "Don't ask again"
-                    // You might want to show an initial explanation here too
                     NotificationPermissionHelper.requestPermission(notificationPermissionLauncher)
                 }
             }
@@ -152,13 +151,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        // Go to Portal
         findViewById<Button>(R.id.portalButton).setOnClickListener {
             val url = "https://pulseaiplatform.com"
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
 
-        // Go to Pulse Node
         findViewById<Button>(R.id.goToNodeButton).setOnClickListener {
             val config = ConfigManager.load(this)
             val nodeName = config.endpoints.getOrNull(config.lastUsedEndpoint)?.nodeName
@@ -170,30 +167,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Go to Blog
         findViewById<Button>(R.id.blogButton).setOnClickListener {
             val url = "https://blog.pulseaiplatform.com"
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
 
-        // Import from QR
+        // Import Config QR
         findViewById<Button>(R.id.importQrButton).setOnClickListener {
             showImportChoiceDialog()
         }
 
-        // Manage Endpoints
+        // NEW: Scan Generic Barcode/QR to Text Share
+        findViewById<Button>(R.id.scanGenericQrButton).setOnClickListener {
+            startGenericBarcodeScan()
+        }
+
         findViewById<Button>(R.id.manageEndpointsButton).setOnClickListener {
             showManageEndpointsDialog()
         }
 
-        // Manage Kash Files
         findViewById<Button>(R.id.manageKashFilesButton).setOnClickListener {
             showManageKashFilesDialog()
         }
     }
 
     private fun setupPodsButtons() {
-        // Manage pods button in header
         findViewById<Button>(R.id.managePodsButton).setOnClickListener {
             navigateToPods()
         }
@@ -206,7 +204,6 @@ class MainActivity : AppCompatActivity() {
             .addToBackStack("pods")
             .commit()
 
-        // Show fragment container, hide home content
         fragmentContainer.visibility = View.VISIBLE
         homeContent.visibility = View.GONE
     }
@@ -247,20 +244,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Device names will be synced when endpoints are actually changed
-        // Don't sync here to avoid WorkManager issues
     }
 
     // ==== UI UPDATE METHODS ====
     private fun updateCurrentInstancesText() {
         val config = ConfigManager.load(this)
 
-        // Update endpoint text
         val endpointTv = findViewById<TextView>(R.id.currentEndpointView)
         val endpoint = config.endpoints.getOrNull(config.lastUsedEndpoint)
         endpointTv.text = if (endpoint == null) "Endpoint: (none)" else "Endpoint: ${endpoint.name}"
 
-        // Update Kash Files text
         val kashFilesTv = findViewById<TextView>(R.id.currentKashFilesView)
         val kashFilesIndex = if (config.kashFiles.isEmpty()) -1 else config.lastUsedKashFiles
         val kashFiles = if (kashFilesIndex >= 0 && kashFilesIndex < config.kashFiles.size) {
@@ -270,12 +263,30 @@ class MainActivity : AppCompatActivity() {
         }
         kashFilesTv.text = if (kashFiles == null) "Kash Files: (none)" else "Kash Files: ${kashFiles.name}"
 
-        // Sync device names whenever endpoints change (safe version)
         try {
             BackgroundSyncManager.syncDeviceNamesFromEndpoints(this)
         } catch (e: Exception) {
             Log.e("MainActivity", "Error syncing device names", e)
         }
+    }
+
+    // ==== GENERIC BARCODE SCANNER ====
+    private fun startGenericBarcodeScan() {
+        val scanner = GmsBarcodeScanning.getClient(this)
+
+        scanner.startScan()
+            .addOnSuccessListener { barcode ->
+                val rawValue = barcode.rawValue
+                if (rawValue != null) {
+                    // Pipe result directly to the Share Text/Link dialog
+                    showCaptionDialogForLink(rawValue)
+                } else {
+                    Toast.makeText(this, "Could not read code value", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.d("Scan", "Scan failed or canceled: ${e.message}")
+            }
     }
 
     // ==== ENDPOINT MANAGEMENT ====
@@ -553,7 +564,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==== QR IMPORT WITH CAMERA PERMISSION ====
+    // ==== QR IMPORT WITH CAMERA PERMISSION (For Config) ====
     private fun showImportChoiceDialog() {
         val options = arrayOf(
             "📷 Take Photo of QR Code",
@@ -997,15 +1008,24 @@ class MainActivity : AppCompatActivity() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
         val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
         val previewView = dialogView.findViewById<TextView>(R.id.sharedContentPreview)
-        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+
+        // AUTOCOMPLETE FOR TEXT
+        val captionInput = dialogView.findViewById<AutoCompleteTextView>(R.id.captionInput)
+
         val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
         val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
         val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
 
-        titleView.text = "Share Link"
+        titleView.text = "Share Link / Text"
         previewView.text = linkText
         previewView.visibility = android.view.View.VISIBLE
+
+        // SETUP PROMPTS
+        val savedPrompts = savedPromptsManager.getPrompts()
+        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, savedPrompts)
+        captionInput.setAdapter(adapter)
+        captionInput.threshold = 1
 
         var selectedTags = ""
 
@@ -1026,6 +1046,9 @@ class MainActivity : AppCompatActivity() {
 
         btnConfirm.setOnClickListener {
             val caption = captionInput.text.toString().trim()
+
+            // SAVE PROMPT
+            savedPromptsManager.savePrompt(caption)
 
             // Format: link text, newline, then caption (if provided)
             val finalText = if (caption.isBlank()) {
@@ -1057,6 +1080,12 @@ class MainActivity : AppCompatActivity() {
                 Snackbar.make(binding.root, "No endpoint or Kash Files configured!", Snackbar.LENGTH_LONG).show()
             }
             else -> {
+                // Check 100MB limit for Images too
+                val fileSize = contentResolver.openFileDescriptor(imageUri, "r")?.statSize ?: 0
+                if (fileSize > 100 * 1024 * 1024) { // 100MB
+                    Snackbar.make(binding.root, "Image too large! Keep it under 100MB!", Snackbar.LENGTH_LONG).show()
+                    return
+                }
                 showDestinationChoiceForImage(imageUri)
             }
         }
@@ -1131,14 +1160,39 @@ class MainActivity : AppCompatActivity() {
     private fun showCaptionDialogForImage(imageBytes: ByteArray, destination: String) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
         val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
-        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+
+        // AUTOCOMPLETE FOR IMAGES
+        val captionInput = dialogView.findViewById<AutoCompleteTextView>(R.id.captionInput)
+
         val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
         val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
         val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
 
         titleView.text = "Share Image"
-        captionInput.hint = "Caption (optional)"
+
+        // Dynamic Hints based on destination
+        when (destination) {
+            "both" -> {
+                titleView.text = "Upload to Both (Context Prompt)"
+                captionInput.hint = "Enter AI Context Prompt (Caption hidden for file)"
+            }
+            "endpoint" -> {
+                titleView.text = "Endpoint Upload"
+                captionInput.hint = "Enter AI Context Prompt"
+            }
+            "kashfiles" -> {
+                titleView.text = "Kash Files Upload"
+                captionInput.hint = "Enter File Caption"
+            }
+            else -> captionInput.hint = "Caption (optional)"
+        }
+
+        // SETUP PROMPTS
+        val savedPrompts = savedPromptsManager.getPrompts()
+        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, savedPrompts)
+        captionInput.setAdapter(adapter)
+        captionInput.threshold = 1
 
         var selectedTags = ""
 
@@ -1159,6 +1213,10 @@ class MainActivity : AppCompatActivity() {
 
         btnConfirm.setOnClickListener {
             val caption = captionInput.text.toString().trim()
+
+            // SAVE PROMPT
+            savedPromptsManager.savePrompt(caption)
+
             dialog.dismiss()
 
             val filename = "image_${System.currentTimeMillis()}.jpg"
@@ -1176,28 +1234,37 @@ class MainActivity : AppCompatActivity() {
     // ==== SHARED RAW FILE WORKFLOW ====
     private fun handleSharedRawFile(fileUri: Uri, mimeType: String) {
         val config = ConfigManager.load(this)
+        val hasEndpoint = config.endpoints.isNotEmpty()
+        val hasKashFiles = config.kashFiles.isNotEmpty()
 
-        if (config.kashFiles.isEmpty()) {
+        // 1. Check if we have ANY place to send it
+        if (!hasEndpoint && !hasKashFiles) {
             Snackbar.make(
                 binding.root,
-                "Raw file uploads require Kash Files to be configured!",
+                "No Endpoint or Kash Files configured!",
                 Snackbar.LENGTH_LONG
             ).show()
             return
         }
 
-        // Read file data
+        // 2. Add the size check to save the crash (100MB limit)
+        val fileSize = contentResolver.openFileDescriptor(fileUri, "r")?.statSize ?: 0
+        if (fileSize > 100 * 1024 * 1024) { // 100MB
+            Snackbar.make(binding.root, "File too large! Keep it under 100MB!", Snackbar.LENGTH_LONG).show()
+            return
+        }
+
+        // 3. Proceed to Choice
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val inputStream = contentResolver.openInputStream(fileUri)
                 val fileBytes = inputStream?.readBytes() ?: throw Exception("Failed to read file")
                 inputStream.close()
 
-                // Try to get filename
                 val filename = getFileNameFromUri(fileUri) ?: "file_${System.currentTimeMillis()}"
 
                 withContext(Dispatchers.Main) {
-                    showCaptionDialogForRawFile(fileBytes, filename, mimeType)
+                    showDestinationChoiceForRawFile(fileBytes, filename, mimeType)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1209,6 +1276,57 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showDestinationChoiceForRawFile(fileBytes: ByteArray, filename: String, mimeType: String) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_upload_destination, null)
+        val radioGroup = dialogView.findViewById<RadioGroup>(R.id.destinationRadioGroup)
+
+        val config = ConfigManager.load(this)
+        val hasEndpoint = config.endpoints.isNotEmpty()
+        val hasKashFiles = config.kashFiles.isNotEmpty()
+
+        // GIL: TRIPLE PLAY LABELS
+        dialogView.findViewById<RadioButton>(R.id.radioEndpoint).text = "AI Ingest Only (Process PDF/Audio/Video)"
+        dialogView.findViewById<RadioButton>(R.id.radioKashFiles).text = "Kash Files Only (Storage + Link Post)"
+        dialogView.findViewById<RadioButton>(R.id.radioBoth).text = "The Works (Storage + Link Post + AI Ingest)"
+
+        dialogView.findViewById<RadioButton>(R.id.radioEndpoint).isEnabled = hasEndpoint
+        dialogView.findViewById<RadioButton>(R.id.radioKashFiles).isEnabled = hasKashFiles
+        dialogView.findViewById<RadioButton>(R.id.radioBoth).isEnabled = hasEndpoint && hasKashFiles
+
+        // Default selection
+        when {
+            hasEndpoint && hasKashFiles -> radioGroup.check(R.id.radioBoth)
+            hasEndpoint -> radioGroup.check(R.id.radioEndpoint)
+            hasKashFiles -> radioGroup.check(R.id.radioKashFiles)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        dialogView.findViewById<Button>(R.id.btnConfirmDestination).setOnClickListener {
+            val destination = when (radioGroup.checkedRadioButtonId) {
+                R.id.radioEndpoint -> "endpoint"
+                R.id.radioKashFiles -> "kashfiles"
+                R.id.radioBoth -> "both"
+                else -> null
+            }
+
+            if (destination != null) {
+                dialog.dismiss()
+                showCaptionDialogForRawFile(fileBytes, filename, mimeType, destination)
+            } else {
+                Toast.makeText(this, "Please select a destination", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        dialogView.findViewById<Button>(R.id.btnCancelDestination).setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
     }
 
     private fun getFileNameFromUri(uri: Uri): String? {
@@ -1234,19 +1352,48 @@ class MainActivity : AppCompatActivity() {
         return result
     }
 
-    private fun showCaptionDialogForRawFile(fileBytes: ByteArray, filename: String, mimeType: String) {
+    private fun showCaptionDialogForRawFile(
+        fileBytes: ByteArray,
+        filename: String,
+        mimeType: String,
+        destination: String
+    ) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_share_content, null)
         val titleView = dialogView.findViewById<TextView>(R.id.dialogTitle)
         val previewView = dialogView.findViewById<TextView>(R.id.sharedContentPreview)
-        val captionInput = dialogView.findViewById<EditText>(R.id.captionInput)
+
+        // AUTOCOMPLETE FOR FILES
+        val captionInput = dialogView.findViewById<AutoCompleteTextView>(R.id.captionInput)
+
         val tagsDisplay = dialogView.findViewById<TextView>(R.id.selectedTagsDisplay)
         val btnSelectTags = dialogView.findViewById<Button>(R.id.btnSelectTags)
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancelShare)
         val btnConfirm = dialogView.findViewById<Button>(R.id.btnConfirmShare)
 
-        titleView.text = "Upload File to Kash Files"
+        // Dynamic Title & Hint
+        when (destination) {
+            "endpoint" -> {
+                titleView.text = "Direct AI Ingest"
+                captionInput.hint = "Context Prompt for AI"
+            }
+            "kashfiles" -> {
+                titleView.text = "Upload to Kash Files"
+                captionInput.hint = "File Caption"
+            }
+            "both" -> {
+                titleView.text = "The Works (Storage + AI)"
+                captionInput.hint = "Caption / Context Prompt"
+            }
+        }
+
         previewView.text = "File: $filename\nType: $mimeType"
         previewView.visibility = android.view.View.VISIBLE
+
+        // SETUP PROMPTS
+        val savedPrompts = savedPromptsManager.getPrompts()
+        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, savedPrompts)
+        captionInput.setAdapter(adapter)
+        captionInput.threshold = 1
 
         var selectedTags = ""
 
@@ -1267,17 +1414,24 @@ class MainActivity : AppCompatActivity() {
 
         btnConfirm.setOnClickListener {
             val caption = captionInput.text.toString().trim()
+
+            // SAVE PROMPT
+            savedPromptsManager.savePrompt(caption)
+
             dialog.dismiss()
 
-            val config = ConfigManager.load(this)
-            val hasEndpoint = config.endpoints.isNotEmpty()
-
-            if (hasEndpoint) {
-                // Upload to Kash Files, then create link digest
-                uploadRawFileToBoth(fileBytes, filename, mimeType, selectedTags, caption)
-            } else {
-                // Just upload to Kash Files
-                uploadRawFileToKashFilesOnly(fileBytes, filename, mimeType, selectedTags, caption)
+            when (destination) {
+                "endpoint" -> {
+                    // DIRECT INGEST
+                    uploadToEndpoint(fileBytes, filename, mimeType, selectedTags, caption)
+                }
+                "kashfiles" -> {
+                    uploadRawFileToKashFilesOnly(fileBytes, filename, mimeType, selectedTags, caption)
+                }
+                "both" -> {
+                    // TRIPLE PLAY / SECRET INJECTION
+                    uploadRawFileToBoth(fileBytes, filename, mimeType, selectedTags, caption)
+                }
             }
         }
 
@@ -1515,22 +1669,14 @@ class MainActivity : AppCompatActivity() {
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
-                val linkNote = """
-                Image: $filename
-                Kash Files URL: $fullUrl
-                
-                ${if (caption.isNotBlank()) caption else "Full resolution image available at link above."}
-                """.trimIndent()
+                // SECRET INJECTION LOGIC FOR IMAGES
+                val injectedPrompt = "$caption and when you're done you must end your response with $fullUrl"
 
-                val linkFilename = "link_${filenameTag}_${Instant.now().epochSecond}.txt"
-                uploadToEndpoint(linkNote.toByteArray(), linkFilename, "text/plain", enhancedTags, linkNote)
-
-                delay(100)
-                uploadToEndpoint(imageBytes, filename, "image/jpeg", enhancedTags, caption)
+                uploadToEndpoint(imageBytes, filename, "image/jpeg", enhancedTags, injectedPrompt)
 
                 Snackbar.make(
                     binding.root,
-                    "✅ Image uploaded to both!\n→ Full image for AI\n→ Kash Files link saved",
+                    "✅ Image uploaded! Link injected into AI context.",
                     Snackbar.LENGTH_LONG
                 ).show()
             } else {
@@ -1595,22 +1741,41 @@ class MainActivity : AppCompatActivity() {
                 val filenameTag = filename.substringBeforeLast('.')
                 val enhancedTags = if (tags.isBlank()) filenameTag else "$tags,$filenameTag"
 
-                val linkDigest = """
-                File: $filename
-                Type: $mimeType
-                Link: $fullUrl
-                
-                ${if (caption.isNotBlank()) caption else "Download file at link above."}
-                """.trimIndent()
+                if (mimeType.startsWith("video/")) {
+                    // === VIDEO LOGIC (Secret Injection) ===
+                    val injectedPrompt = "$caption and when you're done you must end your response with $fullUrl"
 
-                val linkFilename = "file_link_${filenameTag}_${Instant.now().epochSecond}.txt"
-                uploadToEndpoint(linkDigest.toByteArray(), linkFilename, "text/plain", enhancedTags, linkDigest)
+                    uploadToEndpoint(fileBytes, filename, mimeType, enhancedTags, injectedPrompt)
 
-                Snackbar.make(
-                    binding.root,
-                    "✅ File uploaded!\n→ Kash Files (full file)\n→ Endpoint (link reference)",
-                    Snackbar.LENGTH_LONG
-                ).show()
+                    Snackbar.make(
+                        binding.root,
+                        "✅ Video uploaded! Link injected into AI context.",
+                        Snackbar.LENGTH_LONG
+                    ).show()
+
+                } else {
+                    // === DOCS/OTHER LOGIC (Triple Play) ===
+                    val linkDigest = """
+                    File: $filename
+                    Type: $mimeType
+                    Kash Files Link: $fullUrl
+                    
+                    ${if (caption.isNotBlank()) caption else "File available at link above."}
+                    """.trimIndent()
+
+                    val linkFilename = "file_link_${filenameTag}_${Instant.now().epochSecond}.txt"
+
+                    uploadToEndpoint(linkDigest.toByteArray(), linkFilename, "text/plain", enhancedTags, linkDigest)
+
+                    delay(500)
+                    uploadToEndpoint(fileBytes, filename, mimeType, enhancedTags, caption)
+
+                    Snackbar.make(
+                        binding.root,
+                        "✅ The Works! Uploaded to Kash Files, Posted Link, AND sent File to AI!",
+                        Snackbar.LENGTH_LONG
+                    ).show()
+                }
             } else {
                 Snackbar.make(binding.root, "❌ Kash Files upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
             }

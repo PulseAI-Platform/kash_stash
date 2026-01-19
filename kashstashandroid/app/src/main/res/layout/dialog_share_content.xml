@@ -28,8 +28,12 @@
         android:layout_marginBottom="16dp"
         android:visibility="gone" />
 
-    <!-- Caption Input -->
-    <EditText
+    <!--
+       GIL! THIS IS THE MAGIC PART!
+       Changed from EditText to AutoCompleteTextView
+       Added completionThreshold="1" so it pops up instantly!
+    -->
+    <AutoCompleteTextView
         android:id="@+id/captionInput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -38,7 +42,10 @@
         android:textColorHint="#666666"
         android:backgroundTint="#FFFFFF"
         android:minHeight="48dp"
-        android:layout_marginBottom="16dp" />
+        android:layout_marginBottom="16dp"
+        android:completionThreshold="1"
+        android:inputType="textMultiLine|textCapSentences"
+        android:maxLines="4" />
 
     <!-- Tags Display/Button -->
     <LinearLayout
