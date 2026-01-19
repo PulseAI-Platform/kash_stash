@@ -31,21 +31,15 @@ class ShareViewController: UIViewController {
         
         print("[ShareExt] Loaded \(data.count) bytes of config data")
         
-        // Debug: print raw JSON
-        if let jsonString = String(data: data, encoding: .utf8) {
-            print("[ShareExt] Raw config JSON (first 500 chars): \(String(jsonString.prefix(500)))")
-        }
-        
         do {
             let loadedConfig = try JSONDecoder().decode(AppConfig.self, from: data)
             self.config = loadedConfig
             
             print("[ShareExt] ✅ Config loaded successfully")
             print("[ShareExt] Endpoints: \(loadedConfig.endpoints.count)")
+            print("[ShareExt] KashFiles: \(loadedConfig.kashFiles.count)")
             print("[ShareExt] Recent tags: \(loadedConfig.recentTags.count)")
-            print("[ShareExt] Recent tags values: \(loadedConfig.recentTags.map { $0.value })")
             print("[ShareExt] Recent prompts: \(loadedConfig.recentPrompts.count)")
-            print("[ShareExt] Recent prompts values: \(loadedConfig.recentPrompts.map { $0.value })")
             
             if let lastId = loadedConfig.lastUsedEndpoint {
                 currentEndpoint = loadedConfig.endpoints.first(where: { $0.id == lastId })
@@ -55,6 +49,9 @@ class ShareViewController: UIViewController {
             
             currentKashFiles = loadedConfig.kashFiles.first(where: { $0.isActive }) ??
                               loadedConfig.kashFiles.first
+            
+            print("[ShareExt] Current endpoint: \(currentEndpoint?.name ?? "nil")")
+            print("[ShareExt] Current kashFiles: \(currentKashFiles?.name ?? "nil")")
             
             selectedDestination = loadedConfig.defaultUploadDestination
             
@@ -82,8 +79,6 @@ class ShareViewController: UIViewController {
         }
         
         RecentTagsManager.addTags(extraTags, to: &config)
-        
-        print("[ShareExt] Saving tags. New count: \(config.recentTags.count)")
         
         do {
             let encoder = JSONEncoder()
@@ -113,6 +108,7 @@ class ShareViewController: UIViewController {
         
         var configChanged = false
         
+        // Save Context Prompts (usually from Photos/Videos)
         if !photoContextPrompt.isEmpty &&
            photoContextPrompt != "Shared from iOS" &&
            photoContextPrompt.count > 10 {
@@ -120,14 +116,13 @@ class ShareViewController: UIViewController {
             configChanged = true
         }
         
+        // Save Notes/Captions (Text uploads or Link+Caption)
         if !extraNote.isEmpty && extraNote.count > 15 {
             RecentPromptsManager.addPrompt(extraNote, to: &config)
             configChanged = true
         }
         
         guard configChanged else { return }
-        
-        print("[ShareExt] Saving prompts. New count: \(config.recentPrompts.count)")
         
         do {
             let encoder = JSONEncoder()
@@ -151,104 +146,193 @@ class ShareViewController: UIViewController {
         let hasEndpoint = currentEndpoint != nil
         let hasKashFiles = currentKashFiles != nil
         
+        print("[ShareExt] hasEndpoint: \(hasEndpoint), hasKashFiles: \(hasKashFiles)")
+        
         if !hasEndpoint && !hasKashFiles {
             finishWithMessage("No endpoint or Kash Files configured. Please set up in the app first.")
             return
         }
 
-        let containsPhoto = attachments.contains {
+        // Detect content types
+        let containsImage = attachments.contains {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) ||
             $0.hasItemConformingToTypeIdentifier(UTType.png.identifier) ||
             $0.hasItemConformingToTypeIdentifier(UTType.jpeg.identifier)
         }
+        
+        let containsVideo = attachments.contains {
+            $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ||
+            $0.hasItemConformingToTypeIdentifier(UTType.video.identifier) ||
+            $0.hasItemConformingToTypeIdentifier(UTType.mpeg4Movie.identifier) ||
+            $0.hasItemConformingToTypeIdentifier("public.movie")
+        }
+        
+        let containsAudio = attachments.contains {
+            $0.hasItemConformingToTypeIdentifier(UTType.audio.identifier) ||
+            $0.hasItemConformingToTypeIdentifier(UTType.mp3.identifier) ||
+            $0.hasItemConformingToTypeIdentifier("public.mp3") ||
+            $0.hasItemConformingToTypeIdentifier("public.audio")
+        }
+        
+        let containsDocument = attachments.contains {
+            $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
+            $0.hasItemConformingToTypeIdentifier(UTType.spreadsheet.identifier) ||
+            $0.hasItemConformingToTypeIdentifier("public.comma-separated-values-text") ||
+            $0.hasItemConformingToTypeIdentifier(UTType.commaSeparatedText.identifier) ||
+            $0.hasItemConformingToTypeIdentifier("com.microsoft.word.doc") ||
+            $0.hasItemConformingToTypeIdentifier("org.openxmlformats.wordprocessingml.document")
+        }
+        
         let containsText = attachments.contains {
             $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
         }
+        
         let containsURL = attachments.contains {
             $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
         }
-        let containsFile = attachments.contains {
-            $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
-            $0.hasItemConformingToTypeIdentifier("public.file-url")
+        
+        let containsGenericFile = attachments.contains {
+            $0.hasItemConformingToTypeIdentifier("public.file-url") ||
+            $0.hasItemConformingToTypeIdentifier(UTType.data.identifier)
         }
         
-        var isPhoto = containsPhoto
-        var isFile = containsFile && !containsPhoto
-        var isText = (containsText || containsURL) && !containsPhoto && !containsFile
+        print("[ShareExt] Content detection - Image: \(containsImage), Video: \(containsVideo), Audio: \(containsAudio), Document: \(containsDocument), Text: \(containsText), URL: \(containsURL), File: \(containsGenericFile)")
         
-        if !isPhoto && !isFile && !isText {
-            isText = true
-        }
+        // Determine content category - ORDER MATTERS
+        let isMedia = containsImage || containsVideo || containsAudio
+        let isDocument = containsDocument && !isMedia
+        let isText = (containsText || containsURL) && !isMedia && !containsDocument
+        let isFile = containsGenericFile && !isMedia && !containsDocument && !isText
         
-        showDestinationPicker(isPhoto: isPhoto, isFile: isFile, isText: isText)
-    }
-    
-    func showDestinationPicker(isPhoto: Bool, isFile: Bool, isText: Bool) {
-        let hasEndpoint = currentEndpoint != nil
-        let hasKashFiles = currentKashFiles != nil
+        print("[ShareExt] Category - isMedia: \(isMedia), isDocument: \(isDocument), isText: \(isText), isFile: \(isFile)")
         
-        var destinationOptions: [(title: String, destination: UploadDestination)] = []
-        
-        if isFile {
-            if hasEndpoint && hasKashFiles {
-                selectedDestination = .both
-                showInputForm(isPhoto: false, isFile: true, isText: false)
-            } else if hasKashFiles {
-                selectedDestination = .kashFilesOnly
-                showInputForm(isPhoto: false, isFile: true, isText: false)
-            } else {
-                finishWithMessage("Files require Kash Files to be configured.")
-            }
-            return
+        if isMedia {
+            showDestinationPicker(contentType: .media)
+        } else if isDocument {
+            showDestinationPicker(contentType: .document)
         } else if isText {
+            // Text/URLs go to endpoint only - no Kash Files option for plain text
             if hasEndpoint {
                 selectedDestination = .endpointOnly
-                showInputForm(isPhoto: false, isFile: false, isText: true)
+                showInputForm(contentType: .text)
             } else {
                 finishWithMessage("Text sharing requires an endpoint.")
             }
-            return
-        } else if isPhoto {
-            if hasEndpoint {
-                destinationOptions.append(("📡 Endpoint Only", .endpointOnly))
-            }
-            if hasKashFiles {
-                destinationOptions.append(("☁️ Kash Files Only", .kashFilesOnly))
-            }
-            if hasEndpoint && hasKashFiles {
-                destinationOptions.append(("🔄 Both", .both))
-            }
-        }
-        
-        if destinationOptions.count == 0 {
-            finishWithMessage("No upload destinations available.")
-        } else if destinationOptions.count == 1 {
-            selectedDestination = destinationOptions[0].destination
-            showInputForm(isPhoto: isPhoto, isFile: isFile, isText: isText)
+        } else if isFile {
+            showDestinationPicker(contentType: .file)
         } else {
-            let alert = UIAlertController(title: "Upload Destination", message: nil, preferredStyle: .alert)
-            
-            for option in destinationOptions {
-                alert.addAction(UIAlertAction(title: option.title, style: .default) { _ in
-                    self.selectedDestination = option.destination
-                    self.showInputForm(isPhoto: isPhoto, isFile: isFile, isText: isText)
-                })
+            // Default fallback
+            if hasEndpoint {
+                selectedDestination = .endpointOnly
+                showInputForm(contentType: .text)
+            } else {
+                finishWithMessage("No compatible upload destination.")
             }
-            
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-                self.finishWithMessage("Upload cancelled.")
-            })
-            
-            present(alert, animated: true)
         }
     }
     
-    func showInputForm(isPhoto: Bool, isFile: Bool, isText: Bool) {
+    enum ContentType {
+        case media
+        case document
+        case file
+        case text
+    }
+    
+    func showDestinationPicker(contentType: ContentType) {
+        let hasEndpoint = currentEndpoint != nil
+        let hasKashFiles = currentKashFiles != nil
+        
+        print("[ShareExt] showDestinationPicker - contentType: \(contentType), hasEndpoint: \(hasEndpoint), hasKashFiles: \(hasKashFiles)")
+        
+        var options: [(title: String, subtitle: String, destination: UploadDestination)] = []
+        
+        switch contentType {
+        case .media:
+            if hasEndpoint {
+                options.append(("📡 AI Ingestion", "Send to AI for processing", .endpointOnly))
+            }
+            if hasKashFiles {
+                options.append(("☁️ Kash Files Only", "Store file only", .kashFilesOnly))
+            }
+            if hasKashFiles && hasEndpoint {
+                options.append(("🔗 Link + Caption", "Store + create link digest", .linkAndCaption))
+                options.append(("🔄 Both", "AI + Kash Files link in response", .both))
+            }
+            
+        case .document:
+            if hasEndpoint {
+                options.append(("📡 AI Ingestion", "AI processes the document", .endpointOnly))
+            }
+            if hasKashFiles {
+                options.append(("☁️ Kash Files Only", "Store file only", .kashFilesOnly))
+            }
+            if hasKashFiles && hasEndpoint {
+                options.append(("🔗 Link + Caption", "Store + create link digest", .linkAndCaption))
+                options.append(("🔄 Both", "AI + Store + Link digest", .both))
+            }
+            
+        case .file:
+            if hasKashFiles {
+                options.append(("☁️ Kash Files Only", "Store file only", .kashFilesOnly))
+            }
+            if hasKashFiles && hasEndpoint {
+                options.append(("🔗 Link + Caption", "Store + create link digest", .linkAndCaption))
+            }
+            if !hasKashFiles {
+                finishWithMessage("This file type requires Kash Files to be configured.")
+                return
+            }
+            
+        case .text:
+            // Text only goes to endpoint
+            if hasEndpoint {
+                options.append(("📡 Endpoint", "Send to AI", .endpointOnly))
+            }
+        }
+        
+        print("[ShareExt] Built \(options.count) options")
+        
+        if options.isEmpty {
+            finishWithMessage("No upload destinations available.")
+            return
+        }
+        
+        if options.count == 1 {
+            selectedDestination = options[0].destination
+            showInputForm(contentType: contentType)
+            return
+        }
+        
+        let alert = UIAlertController(title: "Upload Destination", message: "Choose where to send this content", preferredStyle: .alert)
+        
+        for option in options {
+            let action = UIAlertAction(title: "\(option.title) - \(option.subtitle)", style: .default) { _ in
+                self.selectedDestination = option.destination
+                self.showInputForm(contentType: contentType)
+            }
+            alert.addAction(action)
+        }
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+            self.finishWithMessage("Upload cancelled.")
+        })
+        
+        present(alert, animated: true)
+    }
+    
+    func showInputForm(contentType: ContentType) {
+        // For Kash Files Only - skip the form entirely, just upload
+        if selectedDestination == .kashFilesOnly {
+            handleIncoming()
+            return
+        }
+        
         let recentTagsArray = config?.recentTags.prefix(10).map { $0.value } ?? []
         let recentPromptsArray = config?.recentPrompts.prefix(5).map { $0.value } ?? []
         
-        print("[ShareExt] showInputForm - recentTags count: \(recentTagsArray.count), values: \(recentTagsArray)")
-        print("[ShareExt] showInputForm - recentPrompts count: \(recentPromptsArray.count), values: \(recentPromptsArray)")
+        let isPhoto = (contentType == .media)
+        let isFile = (contentType == .document || contentType == .file)
+        let isText = (contentType == .text)
         
         let inputVC = ShareInputViewController(
             isPhoto: isPhoto,
@@ -281,221 +365,218 @@ class ShareViewController: UIViewController {
     func handleIncoming() {
         guard let extensionItem = extensionContext?.inputItems.first as? NSExtensionItem,
               let attachments = extensionItem.attachments else {
-            print("[ShareExt] No extension item or attachments")
             finishWithMessage("Unable to load shared content.")
             return
         }
 
-        print("[ShareExt] Number of attachments: \(attachments.count)")
+        print("[ShareExt] Processing \(attachments.count) attachments with destination: \(selectedDestination.rawValue)")
 
         let dispatchGroup = DispatchGroup()
         var uploadTried = false
         var anySuccessful = false
         var kashFilesURL: String?
+        var errorMessage: String?
         let resultQueue = DispatchQueue(label: "upload-results")
 
         for (index, itemProvider) in attachments.enumerated() {
             print("[ShareExt] Attachment \(index) types: \(itemProvider.registeredTypeIdentifiers)")
             
-            if itemProvider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                print("[ShareExt] Processing as URL")
+            // MARK: - Audio Handling
+            if itemProvider.hasItemConformingToTypeIdentifier(UTType.audio.identifier) ||
+               itemProvider.hasItemConformingToTypeIdentifier(UTType.mp3.identifier) ||
+               itemProvider.hasItemConformingToTypeIdentifier("public.mp3") ||
+               itemProvider.hasItemConformingToTypeIdentifier("public.audio") {
+                
+                print("[ShareExt] Processing as audio")
                 dispatchGroup.enter()
-                itemProvider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { (urlData, error) in
-                    defer { dispatchGroup.leave() }
-                    
-                    if let error = error {
-                        print("[ShareExt] Error loading url: \(error)")
-                        return
-                    }
-                    
-                    var url: URL?
-                    if let directUrl = urlData as? URL {
-                        url = directUrl
-                    } else if let urlStr = urlData as? String {
-                        url = URL(string: urlStr)
-                    } else if let data = urlData as? Data, let str = String(data: data, encoding: .utf8) {
-                        url = URL(string: str)
-                    }
-                    
-                    guard let finalUrl = url else {
-                        print("[ShareExt] No URL extracted")
-                        return
-                    }
-                    
-                    print("[ShareExt] Got URL: \(finalUrl)")
-                    
-                    if finalUrl.isFileURL {
-                        print("[ShareExt] URL is a file URL")
-                        
-                        guard let data = try? Data(contentsOf: finalUrl) else {
-                            print("[ShareExt] Failed to load file data from URL")
-                            return
-                        }
-                        
-                        let filename = finalUrl.lastPathComponent
-                        let ext = finalUrl.pathExtension.lowercased()
-                        let imageExtensions = ["jpeg", "jpg", "png", "heic", "heif", "tiff", "bmp", "gif"]
-                        
-                        uploadTried = true
-                        
-                        if imageExtensions.contains(ext) {
-                            print("[ShareExt] File is an image")
-                            let imgFilename = "share_\(Int(Date().timeIntervalSince1970)).png"
-                            
-                            var imageData = data
-                            if let image = UIImage(data: data), let pngData = image.pngData() {
-                                imageData = pngData
-                            }
-                            
-                            if self.selectedDestination == .kashFilesOnly && self.currentEndpoint != nil {
-                                dispatchGroup.enter()
-                                KashFilesClient.uploadFile(
-                                    data: imageData,
-                                    filename: imgFilename,
-                                    mimeType: "image/png",
-                                    config: self.currentKashFiles!
-                                ) { result in
-                                    switch result {
-                                    case .success(let response):
-                                        var downloadURL: String
-                                        if let download = response.download {
-                                            downloadURL = "\(self.currentKashFiles!.baseURL)\(download)"
-                                        } else if let location = response.location {
-                                            downloadURL = "\(self.currentKashFiles!.baseURL)/api/files/\(location)"
-                                        } else {
-                                            downloadURL = "\(self.currentKashFiles!.baseURL)/files/\(imgFilename)"
-                                        }
-                                        
-                                        var linkNote = ""
-                                        if !self.extraNote.isEmpty {
-                                            linkNote = self.extraNote + "\n\n"
-                                        }
-                                        linkNote += "🖼️ Image in Kash Files: \(response.filename ?? imgFilename)\n\nDirect URL: \(downloadURL)"
-                                        let linkTags = "\(self.extraTags),kash-files-link,image-link,\(imgFilename)"
-                                        
-                                        KashStashUploader.uploadTextNote(
-                                            text: linkNote,
-                                            tags: linkTags,
-                                            endpoint: self.currentEndpoint!
-                                        ) { linkSuccess in
-                                            resultQueue.sync {
-                                                anySuccessful = anySuccessful || linkSuccess
-                                                kashFilesURL = downloadURL
-                                            }
-                                            dispatchGroup.leave()
-                                        }
-                                    case .failure(_):
-                                        dispatchGroup.leave()
-                                    }
-                                }
-                            } else {
-                                var contextToPass = self.photoContextPrompt.isEmpty ? "Shared from iOS" : self.photoContextPrompt
-                                if self.selectedDestination == .both && !self.extraNote.isEmpty {
-                                    contextToPass = "\(self.extraNote)|||CAPTION_SEP|||" + contextToPass
-                                }
-                                
-                                dispatchGroup.enter()
-                                KashStashUploader.uploadWithDestination(
-                                    data: imageData,
-                                    filename: imgFilename,
-                                    mimeType: "image/png",
-                                    tags: self.extraTags,
-                                    context: contextToPass,
-                                    destination: self.selectedDestination,
-                                    endpoint: self.currentEndpoint,
-                                    kashFiles: self.currentKashFiles
-                                ) { success, url in
-                                    print("[ShareExt] Image upload result: \(success)")
-                                    resultQueue.sync {
-                                        anySuccessful = anySuccessful || success
-                                        if let u = url { kashFilesURL = u }
-                                    }
-                                    dispatchGroup.leave()
-                                }
-                            }
-                        } else {
-                            print("[ShareExt] File is not an image: \(filename)")
-                            
-                            var mimeType = "application/octet-stream"
-                            if let uti = UTType(filenameExtension: ext) {
-                                mimeType = uti.preferredMIMEType ?? "application/octet-stream"
-                            }
-                            
-                            let actualDestination = (self.currentEndpoint != nil && self.currentKashFiles != nil) ?
-                                UploadDestination.both : self.selectedDestination
-                            
-                            dispatchGroup.enter()
-                            KashStashUploader.uploadWithDestination(
-                                data: data,
-                                filename: filename,
-                                mimeType: mimeType,
-                                tags: self.extraTags,
-                                context: self.extraNote,
-                                destination: actualDestination,
-                                endpoint: self.currentEndpoint,
-                                kashFiles: self.currentKashFiles
-                            ) { success, url in
-                                print("[ShareExt] File upload result: \(success)")
-                                resultQueue.sync {
-                                    anySuccessful = anySuccessful || success
-                                    if let u = url { kashFilesURL = u }
-                                }
-                                dispatchGroup.leave()
-                            }
-                        }
-                    } else {
-                        print("[ShareExt] URL is a web URL")
-                        uploadTried = true
-                        let urlString = finalUrl.absoluteString
-                        let combinedText = self.combineTextWithExtraNote(urlString)
-                        
-                        dispatchGroup.enter()
-                        KashStashUploader.uploadTextNote(
-                            text: combinedText,
-                            tags: self.extraTags,
-                            endpoint: self.currentEndpoint!
-                        ) { success in
-                            print("[ShareExt] URL text upload result: \(success)")
-                            resultQueue.sync {
-                                anySuccessful = anySuccessful || success
-                            }
-                            dispatchGroup.leave()
-                        }
+                
+                let audioTypes = [
+                    UTType.mp3.identifier,
+                    UTType.audio.identifier,
+                    "public.mp3",
+                    "public.audio"
+                ]
+                
+                var typeToLoad: String?
+                for type in audioTypes {
+                    if itemProvider.hasItemConformingToTypeIdentifier(type) {
+                        typeToLoad = type
+                        break
                     }
                 }
-            }
-            else if itemProvider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                print("[ShareExt] Processing as plain text")
-                dispatchGroup.enter()
-                itemProvider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { (textData, error) in
-                    defer { dispatchGroup.leave() }
-                    if let error = error {
-                        print("[ShareExt] Error loading text: \(error)")
+                
+                guard let loadType = typeToLoad else {
+                    dispatchGroup.leave()
+                    continue
+                }
+                
+                itemProvider.loadItem(forTypeIdentifier: loadType, options: nil) { [weak self] (audioData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
                         return
                     }
                     
-                    guard let text = textData as? String, !text.isEmpty else {
-                        print("[ShareExt] Loaded text is nil/empty")
+                    if let error = error {
+                        print("[ShareExt] Error loading audio: \(error)")
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    var data: Data?
+                    var filename = "audio_\(Int(Date().timeIntervalSince1970)).mp3"
+                    
+                    if let url = audioData as? URL {
+                        data = try? Data(contentsOf: url)
+                        if !url.lastPathComponent.isEmpty {
+                            filename = url.lastPathComponent
+                        }
+                    } else if let directData = audioData as? Data {
+                        data = directData
+                    }
+                    
+                    guard let audioBytes = data else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    let sizeCheck = KashStashUploader.checkSizeLimit(audioBytes)
+                    if !sizeCheck.allowed {
+                        resultQueue.sync { errorMessage = sizeCheck.message }
+                        dispatchGroup.leave()
                         return
                     }
                     
                     uploadTried = true
-                    let combinedText = self.combineTextWithExtraNote(text)
+                    let ext = (filename as NSString).pathExtension.lowercased()
+                    var mimeType = "audio/mpeg"
+                    if ext == "wav" { mimeType = "audio/wav" }
+                    else if ext == "m4a" { mimeType = "audio/mp4" }
                     
-                    dispatchGroup.enter()
-                    KashStashUploader.uploadTextNote(
-                        text: combinedText,
+                    let contextToPass: String
+                    if self.selectedDestination == .linkAndCaption {
+                        contextToPass = self.extraNote
+                    } else if self.selectedDestination == .both && !self.extraNote.isEmpty {
+                        contextToPass = "\(self.extraNote)|||CAPTION_SEP|||" + (self.photoContextPrompt.isEmpty ? "Transcribe this audio" : self.photoContextPrompt)
+                    } else {
+                        contextToPass = self.photoContextPrompt.isEmpty ? "Transcribe this audio" : self.photoContextPrompt
+                    }
+                    
+                    KashStashUploader.uploadWithDestination(
+                        data: audioBytes,
+                        filename: filename,
+                        mimeType: mimeType,
                         tags: self.extraTags,
-                        endpoint: self.currentEndpoint!
-                    ) { success in
-                        print("[ShareExt] Text note upload result: \(success)")
+                        context: contextToPass,
+                        destination: self.selectedDestination,
+                        endpoint: self.currentEndpoint,
+                        kashFiles: self.currentKashFiles
+                    ) { success, result in
                         resultQueue.sync {
-                            anySuccessful = anySuccessful || success
+                            if success {
+                                anySuccessful = true
+                                if let url = result, url.hasPrefix("http") { kashFilesURL = url }
+                            } else if let err = result { errorMessage = err }
                         }
                         dispatchGroup.leave()
                     }
                 }
             }
+            // MARK: - Video Handling
+            else if itemProvider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ||
+               itemProvider.hasItemConformingToTypeIdentifier(UTType.video.identifier) ||
+               itemProvider.hasItemConformingToTypeIdentifier(UTType.mpeg4Movie.identifier) ||
+               itemProvider.hasItemConformingToTypeIdentifier("public.movie") {
+                
+                print("[ShareExt] Processing as video")
+                dispatchGroup.enter()
+                
+                let videoTypes = [UTType.mpeg4Movie.identifier, UTType.movie.identifier, UTType.video.identifier, "public.movie"]
+                
+                var typeToLoad: String?
+                for type in videoTypes {
+                    if itemProvider.hasItemConformingToTypeIdentifier(type) {
+                        typeToLoad = type
+                        break
+                    }
+                }
+                
+                guard let loadType = typeToLoad else {
+                    dispatchGroup.leave()
+                    continue
+                }
+                
+                itemProvider.loadItem(forTypeIdentifier: loadType, options: nil) { [weak self] (videoData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    if let error = error {
+                        print("[ShareExt] Error loading video: \(error)")
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    var data: Data?
+                    var filename = "video_\(Int(Date().timeIntervalSince1970)).mp4"
+                    
+                    if let url = videoData as? URL {
+                        data = try? Data(contentsOf: url)
+                        if !url.lastPathComponent.isEmpty { filename = url.lastPathComponent }
+                    } else if let directData = videoData as? Data {
+                        data = directData
+                    }
+                    
+                    guard let videoBytes = data else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    let sizeCheck = KashStashUploader.checkSizeLimit(videoBytes)
+                    if !sizeCheck.allowed {
+                        resultQueue.sync { errorMessage = sizeCheck.message }
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    uploadTried = true
+                    let ext = (filename as NSString).pathExtension.lowercased()
+                    let mimeType = ext == "mov" ? "video/quicktime" : "video/mp4"
+                    
+                    let contextToPass: String
+                    if self.selectedDestination == .linkAndCaption {
+                        contextToPass = self.extraNote
+                    } else if self.selectedDestination == .both {
+                        if !self.extraNote.isEmpty {
+                            contextToPass = "\(self.extraNote)|||CAPTION_SEP|||" + (self.photoContextPrompt.isEmpty ? "Describe this video" : self.photoContextPrompt)
+                        } else {
+                            contextToPass = self.photoContextPrompt.isEmpty ? "Describe this video" : self.photoContextPrompt
+                        }
+                    } else {
+                        contextToPass = self.photoContextPrompt.isEmpty ? "Describe this video" : self.photoContextPrompt
+                    }
+                    
+                    KashStashUploader.uploadWithDestination(
+                        data: videoBytes,
+                        filename: filename,
+                        mimeType: mimeType,
+                        tags: self.extraTags,
+                        context: contextToPass,
+                        destination: self.selectedDestination,
+                        endpoint: self.currentEndpoint,
+                        kashFiles: self.currentKashFiles
+                    ) { success, result in
+                        resultQueue.sync {
+                            if success {
+                                anySuccessful = true
+                                if let url = result, url.hasPrefix("http") { kashFilesURL = url }
+                            } else if let err = result { errorMessage = err }
+                        }
+                        dispatchGroup.leave()
+                    }
+                }
+            }
+            // MARK: - Image Handling
             else if itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) ||
                     itemProvider.hasItemConformingToTypeIdentifier(UTType.png.identifier) ||
                     itemProvider.hasItemConformingToTypeIdentifier(UTType.jpeg.identifier) {
@@ -507,102 +588,293 @@ class ShareViewController: UIViewController {
                                 itemProvider.hasItemConformingToTypeIdentifier(UTType.jpeg.identifier) ? UTType.jpeg.identifier :
                                 UTType.image.identifier
                 
-                itemProvider.loadItem(forTypeIdentifier: typeToLoad, options: nil) { (imageData, error) in
-                    defer { dispatchGroup.leave() }
+                itemProvider.loadItem(forTypeIdentifier: typeToLoad, options: nil) { [weak self] (imageData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
                     if let error = error {
                         print("[ShareExt] Error loading image: \(error)")
+                        dispatchGroup.leave()
                         return
                     }
                     
                     let image: UIImage?
                     if let url = imageData as? URL {
-                        print("[ShareExt] Image came as URL: \(url)")
                         if let data = try? Data(contentsOf: url) {
                             image = UIImage(data: data)
                         } else {
                             image = UIImage(contentsOfFile: url.path)
                         }
                     } else if let data = imageData as? Data {
-                        print("[ShareExt] Image came as Data")
                         image = UIImage(data: data)
                     } else {
-                        print("[ShareExt] Image came as UIImage")
                         image = imageData as? UIImage
                     }
                     
                     guard let img = image, let pngData = img.pngData() else {
-                        print("[ShareExt] Could not get PNG data from image")
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    let sizeCheck = KashStashUploader.checkSizeLimit(pngData)
+                    if !sizeCheck.allowed {
+                        resultQueue.sync { errorMessage = sizeCheck.message }
+                        dispatchGroup.leave()
                         return
                     }
                     
                     uploadTried = true
                     let filename = "share_\(Int(Date().timeIntervalSince1970)).png"
                     
-                    if self.selectedDestination == .kashFilesOnly && self.currentEndpoint != nil {
-                        dispatchGroup.enter()
-                        KashFilesClient.uploadFile(
-                            data: pngData,
-                            filename: filename,
-                            mimeType: "image/png",
-                            config: self.currentKashFiles!
-                        ) { result in
-                            switch result {
-                            case .success(let response):
-                                var downloadURL: String
-                                if let download = response.download {
-                                    downloadURL = "\(self.currentKashFiles!.baseURL)\(download)"
-                                } else if let location = response.location {
-                                    downloadURL = "\(self.currentKashFiles!.baseURL)/api/files/\(location)"
-                                } else {
-                                    downloadURL = "\(self.currentKashFiles!.baseURL)/files/\(filename)"
-                                }
-                                
-                                var linkNote = ""
-                                if !self.extraNote.isEmpty {
-                                    linkNote = self.extraNote + "\n\n"
-                                }
-                                linkNote += "🖼️ Image in Kash Files: \(response.filename ?? filename)\n\nDirect URL: \(downloadURL)"
-                                let linkTags = "\(self.extraTags),kash-files-link,image-link,\(filename)"
-                                
-                                KashStashUploader.uploadTextNote(
-                                    text: linkNote,
-                                    tags: linkTags,
-                                    endpoint: self.currentEndpoint!
-                                ) { linkSuccess in
-                                    resultQueue.sync {
-                                        anySuccessful = anySuccessful || linkSuccess
-                                        kashFilesURL = downloadURL
-                                    }
-                                    dispatchGroup.leave()
-                                }
-                            case .failure(_):
-                                dispatchGroup.leave()
-                            }
+                    let contextToPass: String
+                    if self.selectedDestination == .linkAndCaption {
+                        contextToPass = self.extraNote
+                    } else if self.selectedDestination == .both {
+                        if !self.extraNote.isEmpty {
+                            contextToPass = "\(self.extraNote)|||CAPTION_SEP|||" + (self.photoContextPrompt.isEmpty ? "Describe this image" : self.photoContextPrompt)
+                        } else {
+                            contextToPass = self.photoContextPrompt.isEmpty ? "Describe this image" : self.photoContextPrompt
                         }
                     } else {
-                        var contextToPass = self.photoContextPrompt.isEmpty ? "Shared from iOS" : self.photoContextPrompt
-                        if self.selectedDestination == .both && !self.extraNote.isEmpty {
-                            contextToPass = "\(self.extraNote)|||CAPTION_SEP|||" + contextToPass
+                        contextToPass = self.photoContextPrompt.isEmpty ? "Describe this image" : self.photoContextPrompt
+                    }
+                    
+                    KashStashUploader.uploadWithDestination(
+                        data: pngData,
+                        filename: filename,
+                        mimeType: "image/png",
+                        tags: self.extraTags,
+                        context: contextToPass,
+                        destination: self.selectedDestination,
+                        endpoint: self.currentEndpoint,
+                        kashFiles: self.currentKashFiles
+                    ) { success, result in
+                        resultQueue.sync {
+                            if success {
+                                anySuccessful = true
+                                if let url = result, url.hasPrefix("http") { kashFilesURL = url }
+                            } else if let err = result { errorMessage = err }
+                        }
+                        dispatchGroup.leave()
+                    }
+                }
+            }
+            // MARK: - Document Handling (PDF, CSV, DOC, etc.)
+            else if itemProvider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
+                    itemProvider.hasItemConformingToTypeIdentifier(UTType.commaSeparatedText.identifier) ||
+                    itemProvider.hasItemConformingToTypeIdentifier("public.comma-separated-values-text") ||
+                    itemProvider.hasItemConformingToTypeIdentifier("com.microsoft.word.doc") ||
+                    itemProvider.hasItemConformingToTypeIdentifier("org.openxmlformats.wordprocessingml.document") ||
+                    itemProvider.hasItemConformingToTypeIdentifier(UTType.spreadsheet.identifier) {
+                
+                print("[ShareExt] Processing as document")
+                dispatchGroup.enter()
+                
+                let docTypes = [
+                    UTType.pdf.identifier,
+                    UTType.commaSeparatedText.identifier,
+                    "public.comma-separated-values-text",
+                    "com.microsoft.word.doc",
+                    "org.openxmlformats.wordprocessingml.document",
+                    UTType.spreadsheet.identifier,
+                    UTType.data.identifier
+                ]
+                
+                var typeToLoad: String?
+                for type in docTypes {
+                    if itemProvider.hasItemConformingToTypeIdentifier(type) {
+                        typeToLoad = type
+                        break
+                    }
+                }
+                
+                guard let loadType = typeToLoad else {
+                    dispatchGroup.leave()
+                    continue
+                }
+                
+                itemProvider.loadItem(forTypeIdentifier: loadType, options: nil) { [weak self] (docData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    if let error = error {
+                        print("[ShareExt] Error loading document: \(error)")
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    var data: Data?
+                    var filename = "document_\(Int(Date().timeIntervalSince1970))"
+                    var mimeType = "application/octet-stream"
+                    
+                    if let url = docData as? URL {
+                        data = try? Data(contentsOf: url)
+                        filename = url.lastPathComponent
+                        let ext = url.pathExtension.lowercased()
+                        mimeType = self.mimeTypeForExtension(ext)
+                    } else if let directData = docData as? Data {
+                        data = directData
+                        if loadType == UTType.pdf.identifier {
+                            filename += ".pdf"
+                            mimeType = "application/pdf"
+                        } else if loadType.contains("csv") {
+                            filename += ".csv"
+                            mimeType = "text/csv"
+                        }
+                    }
+                    
+                    guard let docBytes = data else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    let sizeCheck = KashStashUploader.checkSizeLimit(docBytes)
+                    if !sizeCheck.allowed {
+                        resultQueue.sync { errorMessage = sizeCheck.message }
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    uploadTried = true
+                    
+                    KashStashUploader.uploadWithDestination(
+                        data: docBytes,
+                        filename: filename,
+                        mimeType: mimeType,
+                        tags: self.extraTags,
+                        context: self.extraNote,
+                        destination: self.selectedDestination,
+                        endpoint: self.currentEndpoint,
+                        kashFiles: self.currentKashFiles
+                    ) { success, result in
+                        resultQueue.sync {
+                            if success {
+                                anySuccessful = true
+                                if let url = result, url.hasPrefix("http") { kashFilesURL = url }
+                            } else if let err = result { errorMessage = err }
+                        }
+                        dispatchGroup.leave()
+                    }
+                }
+            }
+            // MARK: - URL Handling
+            else if itemProvider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                print("[ShareExt] Processing as URL")
+                dispatchGroup.enter()
+                
+                itemProvider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] (urlData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    if let error = error {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    var url: URL?
+                    if let directUrl = urlData as? URL {
+                        url = directUrl
+                    } else if let urlStr = urlData as? String {
+                        url = URL(string: urlStr)
+                    }
+                    
+                    guard let finalUrl = url else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    if finalUrl.isFileURL {
+                        guard let data = try? Data(contentsOf: finalUrl) else {
+                            dispatchGroup.leave()
+                            return
                         }
                         
-                        dispatchGroup.enter()
+                        let filename = finalUrl.lastPathComponent
+                        let ext = finalUrl.pathExtension.lowercased()
+                        let mimeType = self.mimeTypeForExtension(ext)
+                        
+                        let sizeCheck = KashStashUploader.checkSizeLimit(data)
+                        if !sizeCheck.allowed {
+                            resultQueue.sync { errorMessage = sizeCheck.message }
+                            dispatchGroup.leave()
+                            return
+                        }
+                        
+                        uploadTried = true
+                        
                         KashStashUploader.uploadWithDestination(
-                            data: pngData,
+                            data: data,
                             filename: filename,
-                            mimeType: "image/png",
+                            mimeType: mimeType,
                             tags: self.extraTags,
-                            context: contextToPass,
+                            context: self.extraNote,
                             destination: self.selectedDestination,
                             endpoint: self.currentEndpoint,
                             kashFiles: self.currentKashFiles
-                        ) { success, url in
-                            print("[ShareExt] Photo upload result: \(success)")
+                        ) { success, result in
                             resultQueue.sync {
-                                anySuccessful = anySuccessful || success
-                                if let u = url { kashFilesURL = u }
+                                if success {
+                                    anySuccessful = true
+                                    if let url = result, url.hasPrefix("http") { kashFilesURL = url }
+                                } else if let err = result { errorMessage = err }
                             }
                             dispatchGroup.leave()
                         }
+                    } else {
+                        guard let endpoint = self.currentEndpoint else {
+                            dispatchGroup.leave()
+                            return
+                        }
+                        
+                        uploadTried = true
+                        var combinedText = finalUrl.absoluteString
+                        if !self.extraNote.isEmpty {
+                            combinedText += "\n\n\(self.extraNote)"
+                        }
+                        
+                        KashStashUploader.uploadTextNote(text: combinedText, tags: self.extraTags, endpoint: endpoint) { success in
+                            resultQueue.sync { anySuccessful = anySuccessful || success }
+                            dispatchGroup.leave()
+                        }
+                    }
+                }
+            }
+            // MARK: - Plain Text Handling
+            else if itemProvider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                print("[ShareExt] Processing as plain text")
+                dispatchGroup.enter()
+                
+                itemProvider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { [weak self] (textData, error) in
+                    guard let self = self else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    guard let text = textData as? String, !text.isEmpty else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    guard let endpoint = self.currentEndpoint else {
+                        dispatchGroup.leave()
+                        return
+                    }
+                    
+                    uploadTried = true
+                    var combinedText = text
+                    if !self.extraNote.isEmpty {
+                        combinedText += "\n\n\(self.extraNote)"
+                    }
+                    
+                    KashStashUploader.uploadTextNote(text: combinedText, tags: self.extraTags, endpoint: endpoint) { success in
+                        resultQueue.sync { anySuccessful = anySuccessful || success }
+                        dispatchGroup.leave()
                     }
                 }
             }
@@ -610,46 +882,55 @@ class ShareViewController: UIViewController {
 
         dispatchGroup.notify(queue: .main) {
             resultQueue.sync {
-                if !uploadTried {
-                    print("[ShareExt] No shareable items found after iterating attachments")
+                if let error = errorMessage, !anySuccessful {
+                    self.finishWithMessage("Upload failed: \(error)")
+                } else if !uploadTried {
                     self.finishWithMessage("No shareable content found.")
                 } else if anySuccessful {
-                    print("[ShareExt] Success (at least one upload worked)")
-                    
                     self.saveTagsToConfig()
                     self.savePromptsToConfig()
-                    
                     var msg = "Shared to KashStash!"
-                    if let url = kashFilesURL {
-                        msg += "\n\(url)"
-                    }
+                    if let url = kashFilesURL { msg += "\n\(url)" }
                     self.finishWithMessage(msg)
                 } else {
-                    print("[ShareExt] Upload failed (all attempts failed)")
                     self.finishWithMessage("Upload failed.")
                 }
             }
         }
     }
     
-    func combineTextWithExtraNote(_ text: String) -> String {
-        if !extraNote.isEmpty {
-            return text + "\n\n" + extraNote
+    func mimeTypeForExtension(_ ext: String) -> String {
+        switch ext {
+        case "pdf": return "application/pdf"
+        case "csv": return "text/csv"
+        case "txt": return "text/plain"
+        case "doc": return "application/msword"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xls": return "application/vnd.ms-excel"
+        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        case "mp4", "m4v": return "video/mp4"
+        case "mov": return "video/quicktime"
+        case "mp3": return "audio/mpeg"
+        case "wav": return "audio/wav"
+        case "m4a": return "audio/mp4"
+        case "json": return "application/json"
+        default: return "application/octet-stream"
         }
-        return text
     }
 
     func finishWithMessage(_ message: String) {
-        print("[ShareExt] Showing alert: \(message)")
+        print("[ShareExt] \(message)")
         let alert = UIAlertController(title: "KashStash", message: message, preferredStyle: .alert)
         present(alert, animated: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
         }
     }
 }
-
-// MARK: - ShareInputViewController
 
 // MARK: - ShareInputViewController
 
@@ -691,7 +972,11 @@ class ShareInputViewController: UIViewController {
     }
     
     private var showNoteField: Bool {
-        return (isPhoto && destination != .endpointOnly) || isFile || isText
+        if isPhoto {
+            return destination == .linkAndCaption
+        }
+        // Show note field for files AND text
+        return isFile || isText
     }
     
     init(isPhoto: Bool, isFile: Bool, isText: Bool, destination: UploadDestination,
@@ -719,7 +1004,6 @@ class ShareInputViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        
         setupScrollView()
         setupUI()
         setupKeyboardHandling()
@@ -728,7 +1012,6 @@ class ShareInputViewController: UIViewController {
     private func setupScrollView() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
-        
         contentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentView)
         
@@ -737,7 +1020,6 @@ class ShareInputViewController: UIViewController {
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
             contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
@@ -751,22 +1033,31 @@ class ShareInputViewController: UIViewController {
         var lastAnchor = contentView.topAnchor
         var lastOffset: CGFloat = padding
         
-        // Title
         let titleLabel = UILabel()
         titleLabel.text = "Share to Pulse"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(titleLabel)
         
+        let destLabel = UILabel()
+        destLabel.text = "📍 \(destination.displayName)"
+        destLabel.font = .systemFont(ofSize: 14)
+        destLabel.textColor = .secondaryLabel
+        destLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(destLabel)
+        
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: lastAnchor, constant: lastOffset),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding)
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
+            destLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            destLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
+            destLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding)
         ])
-        lastAnchor = titleLabel.bottomAnchor
-        lastOffset = 24
+        lastAnchor = destLabel.bottomAnchor
+        lastOffset = 20
         
-        // ===== TAGS SECTION =====
+        // Tags
         let tagsLabel = createSectionLabel(text: "Tags")
         contentView.addSubview(tagsLabel)
         NSLayoutConstraint.activate([
@@ -777,7 +1068,6 @@ class ShareInputViewController: UIViewController {
         lastAnchor = tagsLabel.bottomAnchor
         lastOffset = 8
         
-        // Tags input field
         tagsField.text = initialTags
         tagsField.placeholder = "Enter tags (comma separated)"
         tagsField.borderStyle = .roundedRect
@@ -796,12 +1086,10 @@ class ShareInputViewController: UIViewController {
         lastAnchor = tagsField.bottomAnchor
         lastOffset = 12
         
-        // Tags search field
         if !recentTags.isEmpty {
             tagsSearchField.placeholder = "🔍 Search saved tags..."
             tagsSearchField.borderStyle = .roundedRect
             tagsSearchField.autocapitalizationType = .none
-            tagsSearchField.autocorrectionType = .no
             tagsSearchField.font = .systemFont(ofSize: 14)
             tagsSearchField.clearButtonMode = .whileEditing
             tagsSearchField.addTarget(self, action: #selector(tagsSearchChanged), for: .editingChanged)
@@ -817,7 +1105,6 @@ class ShareInputViewController: UIViewController {
             lastAnchor = tagsSearchField.bottomAnchor
             lastOffset = 8
             
-            // Tags list container with scroll
             tagsListContainer.translatesAutoresizingMaskIntoConstraints = false
             tagsListContainer.layer.borderColor = UIColor.systemGray4.cgColor
             tagsListContainer.layer.borderWidth = 1
@@ -839,27 +1126,24 @@ class ShareInputViewController: UIViewController {
                 tagsListContainer.topAnchor.constraint(equalTo: lastAnchor, constant: lastOffset),
                 tagsListContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
                 tagsListContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
-                tagsListContainer.heightAnchor.constraint(equalToConstant: 120),
-                
+                tagsListContainer.heightAnchor.constraint(equalToConstant: 100),
                 tagsScrollView.topAnchor.constraint(equalTo: tagsListContainer.topAnchor),
                 tagsScrollView.leadingAnchor.constraint(equalTo: tagsListContainer.leadingAnchor),
                 tagsScrollView.trailingAnchor.constraint(equalTo: tagsListContainer.trailingAnchor),
                 tagsScrollView.bottomAnchor.constraint(equalTo: tagsListContainer.bottomAnchor),
-                
                 tagsStackView.topAnchor.constraint(equalTo: tagsScrollView.topAnchor, constant: 8),
                 tagsStackView.leadingAnchor.constraint(equalTo: tagsScrollView.leadingAnchor, constant: 8),
                 tagsStackView.trailingAnchor.constraint(equalTo: tagsScrollView.trailingAnchor, constant: -8),
                 tagsStackView.bottomAnchor.constraint(equalTo: tagsScrollView.bottomAnchor, constant: -8),
                 tagsStackView.widthAnchor.constraint(equalTo: tagsScrollView.widthAnchor, constant: -16)
             ])
-            
             rebuildTagsList()
-            
             lastAnchor = tagsListContainer.bottomAnchor
             lastOffset = 20
         }
         
-        // ===== PROMPT FIELD (for photos) =====
+        var promptsAdded = false
+        
         if showPromptField {
             let promptLabel = createSectionLabel(text: "AI Context Prompt")
             contentView.addSubview(promptLabel)
@@ -871,7 +1155,7 @@ class ShareInputViewController: UIViewController {
             lastAnchor = promptLabel.bottomAnchor
             lastOffset = 8
             
-            setupTextView(promptTextView, initialText: initialPrompt, placeholder: "Describe what you want the AI to do with this image...")
+            setupTextView(promptTextView, initialText: initialPrompt, placeholder: "Describe what you want the AI to do...")
             contentView.addSubview(promptTextView)
             
             NSLayoutConstraint.activate([
@@ -883,22 +1167,21 @@ class ShareInputViewController: UIViewController {
             lastAnchor = promptTextView.bottomAnchor
             lastOffset = 12
             
-            // Prompts search and list
             if !recentPrompts.isEmpty {
                 lastAnchor = addPromptsSection(after: lastAnchor, offset: lastOffset, padding: padding, targetTextView: promptTextView)
                 lastOffset = 20
+                promptsAdded = true
             }
         }
         
-        // ===== NOTE/CAPTION FIELD =====
         if showNoteField {
             let noteTitle: String
             if isPhoto {
                 noteTitle = "Caption/Description"
-            } else if isFile {
-                noteTitle = "File Description"
-            } else {
+            } else if isText {
                 noteTitle = "Additional Note"
+            } else {
+                noteTitle = "File Description"
             }
             
             let noteLabel = createSectionLabel(text: noteTitle)
@@ -918,21 +1201,21 @@ class ShareInputViewController: UIViewController {
                 noteTextView.topAnchor.constraint(equalTo: lastAnchor, constant: lastOffset),
                 noteTextView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
                 noteTextView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
-                noteTextView.heightAnchor.constraint(equalToConstant: 100)
+                noteTextView.heightAnchor.constraint(equalToConstant: 80)
             ])
             lastAnchor = noteTextView.bottomAnchor
             lastOffset = 12
             
-            // Show prompts for text/file shares
-            if !isPhoto && !recentPrompts.isEmpty {
+            // If we haven't added prompts yet, add them here attached to the note field
+            if !promptsAdded && !recentPrompts.isEmpty {
                 lastAnchor = addPromptsSection(after: lastAnchor, offset: lastOffset, padding: padding, targetTextView: noteTextView)
-                lastOffset = 24
+                lastOffset = 20
+                promptsAdded = true
             } else {
                 lastOffset = 24
             }
         }
         
-        // ===== BUTTONS =====
         let buttonStack = UIStackView()
         buttonStack.axis = .horizontal
         buttonStack.spacing = 12
@@ -977,10 +1260,8 @@ class ShareInputViewController: UIViewController {
             promptsSectionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding)
         ])
         
-        promptSearchField.placeholder = "🔍 Search saved prompts..."
+        promptSearchField.placeholder = "🔍 Search prompts..."
         promptSearchField.borderStyle = .roundedRect
-        promptSearchField.autocapitalizationType = .none
-        promptSearchField.autocorrectionType = .no
         promptSearchField.font = .systemFont(ofSize: 14)
         promptSearchField.clearButtonMode = .whileEditing
         promptSearchField.addTarget(self, action: #selector(promptsSearchChanged), for: .editingChanged)
@@ -1003,7 +1284,6 @@ class ShareInputViewController: UIViewController {
         
         let promptsScrollView = UIScrollView()
         promptsScrollView.translatesAutoresizingMaskIntoConstraints = false
-        promptsScrollView.showsVerticalScrollIndicator = true
         promptsListContainer.addSubview(promptsScrollView)
         
         promptsStackView.axis = .vertical
@@ -1015,13 +1295,11 @@ class ShareInputViewController: UIViewController {
             promptsListContainer.topAnchor.constraint(equalTo: promptSearchField.bottomAnchor, constant: 8),
             promptsListContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             promptsListContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
-            promptsListContainer.heightAnchor.constraint(equalToConstant: 150),
-            
+            promptsListContainer.heightAnchor.constraint(equalToConstant: 120),
             promptsScrollView.topAnchor.constraint(equalTo: promptsListContainer.topAnchor),
             promptsScrollView.leadingAnchor.constraint(equalTo: promptsListContainer.leadingAnchor),
             promptsScrollView.trailingAnchor.constraint(equalTo: promptsListContainer.trailingAnchor),
             promptsScrollView.bottomAnchor.constraint(equalTo: promptsListContainer.bottomAnchor),
-            
             promptsStackView.topAnchor.constraint(equalTo: promptsScrollView.topAnchor, constant: 8),
             promptsStackView.leadingAnchor.constraint(equalTo: promptsScrollView.leadingAnchor, constant: 8),
             promptsStackView.trailingAnchor.constraint(equalTo: promptsScrollView.trailingAnchor, constant: -8),
@@ -1029,25 +1307,18 @@ class ShareInputViewController: UIViewController {
             promptsStackView.widthAnchor.constraint(equalTo: promptsScrollView.widthAnchor, constant: -16)
         ])
         
-        // Store which text view this prompts section targets
         promptsListContainer.tag = targetTextView == promptTextView ? 1 : 2
-        
         rebuildPromptsList()
-        
         return promptsListContainer.bottomAnchor
     }
     
-    // MARK: - Rebuild Lists
-    
     private func rebuildTagsList() {
         tagsStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        
         if filteredTags.isEmpty {
             let emptyLabel = UILabel()
             emptyLabel.text = "No matching tags"
             emptyLabel.font = .systemFont(ofSize: 14)
             emptyLabel.textColor = .secondaryLabel
-            emptyLabel.textAlignment = .center
             tagsStackView.addArrangedSubview(emptyLabel)
         } else {
             for (index, tag) in filteredTags.enumerated() {
@@ -1059,13 +1330,11 @@ class ShareInputViewController: UIViewController {
     
     private func rebuildPromptsList() {
         promptsStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        
         if filteredPrompts.isEmpty {
             let emptyLabel = UILabel()
             emptyLabel.text = "No matching prompts"
             emptyLabel.font = .systemFont(ofSize: 14)
             emptyLabel.textColor = .secondaryLabel
-            emptyLabel.textAlignment = .center
             promptsStackView.addArrangedSubview(emptyLabel)
         } else {
             for (index, prompt) in filteredPrompts.enumerated() {
@@ -1075,33 +1344,17 @@ class ShareInputViewController: UIViewController {
         }
     }
     
-    // MARK: - Search Handlers
-    
     @objc private func tagsSearchChanged() {
         let searchText = tagsSearchField.text?.lowercased().trimmingCharacters(in: .whitespaces) ?? ""
-        
-        if searchText.isEmpty {
-            filteredTags = recentTags
-        } else {
-            filteredTags = recentTags.filter { $0.lowercased().contains(searchText) }
-        }
-        
+        filteredTags = searchText.isEmpty ? recentTags : recentTags.filter { $0.lowercased().contains(searchText) }
         rebuildTagsList()
     }
     
     @objc private func promptsSearchChanged() {
         let searchText = promptSearchField.text?.lowercased().trimmingCharacters(in: .whitespaces) ?? ""
-        
-        if searchText.isEmpty {
-            filteredPrompts = recentPrompts
-        } else {
-            filteredPrompts = recentPrompts.filter { $0.lowercased().contains(searchText) }
-        }
-        
+        filteredPrompts = searchText.isEmpty ? recentPrompts : recentPrompts.filter { $0.lowercased().contains(searchText) }
         rebuildPromptsList()
     }
-    
-    // MARK: - Button Creators
     
     private func createTagButton(title: String, index: Int) -> UIButton {
         let btn = UIButton(type: .system)
@@ -1119,7 +1372,6 @@ class ShareInputViewController: UIViewController {
     
     private func createPromptButton(title: String, index: Int) -> UIButton {
         let btn = UIButton(type: .system)
-        
         let truncated = title.count > 80 ? String(title.prefix(77)) + "..." : title
         btn.setTitle("💬 \(truncated)", for: .normal)
         btn.titleLabel?.font = .systemFont(ofSize: 14)
@@ -1135,50 +1387,27 @@ class ShareInputViewController: UIViewController {
         return btn
     }
     
-    // MARK: - Button Actions
-    
     @objc private func filteredTagButtonTapped(_ sender: UIButton) {
         guard sender.tag < filteredTags.count else { return }
         let tag = filteredTags[sender.tag]
-        
         let currentText = tagsField.text ?? ""
         let currentTags = Set(currentText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
-        
         if !currentTags.contains(tag) {
-            if currentText.isEmpty {
-                tagsField.text = tag
-            } else {
-                tagsField.text = currentText + "," + tag
-            }
+            tagsField.text = currentText.isEmpty ? tag : currentText + "," + tag
         }
     }
     
     @objc private func filteredPromptButtonTapped(_ sender: UIButton) {
         guard sender.tag < filteredPrompts.count else { return }
         let prompt = filteredPrompts[sender.tag]
-        
-        // Determine which text view to append to
-        let targetTextView: UITextView
-        if showPromptField && promptsListContainer.tag == 1 {
-            targetTextView = promptTextView
-        } else {
-            targetTextView = noteTextView
-        }
-        
+        let targetTextView: UITextView = (showPromptField && promptsListContainer.tag == 1) ? promptTextView : noteTextView
         if targetTextView.textColor == .placeholderText {
             targetTextView.text = ""
             targetTextView.textColor = .label
         }
-        
         let currentText = targetTextView.text ?? ""
-        if currentText.isEmpty {
-            targetTextView.text = prompt
-        } else {
-            targetTextView.text = currentText + "\n\n" + prompt
-        }
+        targetTextView.text = currentText.isEmpty ? prompt : currentText + "\n\n" + prompt
     }
-    
-    // MARK: - Helper Methods
     
     private func createSectionLabel(text: String) -> UILabel {
         let label = UILabel()
@@ -1201,48 +1430,26 @@ class ShareInputViewController: UIViewController {
         textView.translatesAutoresizingMaskIntoConstraints = false
     }
     
-    // MARK: - Actions
-    
     @objc private func cancelTapped() {
-        dismiss(animated: true) {
-            self.onCancel?()
-        }
+        dismiss(animated: true) { self.onCancel?() }
     }
     
     @objc private func shareTapped() {
         let tags = tagsField.text ?? ""
-        
         var prompt = ""
         if showPromptField {
             prompt = promptTextView.textColor == .placeholderText ? "" : (promptTextView.text ?? "")
         }
-        
         var note = ""
         if showNoteField {
             note = noteTextView.textColor == .placeholderText ? "" : (noteTextView.text ?? "")
         }
-        
-        dismiss(animated: true) {
-            self.onComplete?(tags, prompt, note)
-        }
+        dismiss(animated: true) { self.onComplete?(tags, prompt, note) }
     }
     
-    // MARK: - Keyboard Handling
-    
     private func setupKeyboardHandling() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillShow),
-            name: UIResponder.keyboardWillShowNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillHide),
-            name: UIResponder.keyboardWillHideNotification,
-            object: nil
-        )
-        
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
         view.addGestureRecognizer(tapGesture)
@@ -1260,12 +1467,8 @@ class ShareInputViewController: UIViewController {
         scrollView.scrollIndicatorInsets = .zero
     }
     
-    @objc private func dismissKeyboard() {
-        view.endEditing(true)
-    }
+    @objc private func dismissKeyboard() { view.endEditing(true) }
 }
-
-// MARK: - UITextViewDelegate
 
 extension ShareInputViewController: UITextViewDelegate {
     func textViewDidBeginEditing(_ textView: UITextView) {
@@ -1277,11 +1480,7 @@ extension ShareInputViewController: UITextViewDelegate {
     
     func textViewDidEndEditing(_ textView: UITextView) {
         if textView.text.isEmpty {
-            if textView == promptTextView {
-                textView.text = "Describe what you want the AI to do with this image..."
-            } else {
-                textView.text = "Add a description or note..."
-            }
+            textView.text = textView == promptTextView ? "Describe what you want the AI to do..." : "Add a description or note..."
             textView.textColor = .placeholderText
         }
     }

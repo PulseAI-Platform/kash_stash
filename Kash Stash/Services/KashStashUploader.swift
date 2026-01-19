@@ -16,9 +16,6 @@ class KashStashUploader {
     
     // MARK: - Private Helpers
     
-    // In KashStashUploader.swift, update the mergedTags function:
-    // In KashStashUploader.swift, update the mergedTags function:
-
     private static func mergedTags(userTags: String, deviceName: String) -> String {
         let userTagsArr = userTags
             .split(separator: ",")
@@ -29,10 +26,7 @@ class KashStashUploader {
         var tagsSet = Set(userTagsArr.map { String($0) })
         
         if !deviceTag.isEmpty {
-            // Add the device tag
             tagsSet.insert(deviceTag)
-            
-            // ADD THIS LINE - Add the from- prefix tag to identify source device
             tagsSet.insert("from-\(deviceTag)")
         }
         
@@ -175,7 +169,6 @@ class KashStashUploader {
                     completion(success, nil)
                 }
             } else if mimeType == "text/plain" {
-                // TEXT: Get the actual text and combine with caption
                 let sharedText = String(data: data, encoding: .utf8) ?? ""
                 var finalText = sharedText
                 if !context.isEmpty {
@@ -221,6 +214,44 @@ class KashStashUploader {
                 }
             }
             
+        case .linkAndCaption:
+            guard let endpoint = endpoint, let kashFiles = kashFiles else {
+                completion(false, "Both endpoint and Kash Files required for Link + Caption")
+                return
+            }
+            
+            print("[Upload] Starting Link + Caption mode upload")
+            
+            KashFilesClient.uploadFile(data: data, filename: filename, mimeType: mimeType, config: kashFiles) { result in
+                switch result {
+                case .success(let response):
+                    var downloadURL: String
+                    if let download = response.download {
+                        downloadURL = "\(kashFiles.baseURL)\(download)"
+                    } else if let location = response.location {
+                        downloadURL = "\(kashFiles.baseURL)/api/files/\(location)"
+                    } else {
+                        downloadURL = "\(kashFiles.baseURL)/files/\(filename)"
+                    }
+                    
+                    // Create link digest with caption (no AI processing)
+                    var linkNote = "📎 File in Kash Files: \(response.filename ?? filename)\n\n🔗 URL: \(downloadURL)"
+                    if !context.isEmpty {
+                        linkNote += "\n\n\(context)"
+                    }
+                    let linkTags = "\(tags),kash-files-link,\(filename)"
+                    
+                    uploadTextNote(text: linkNote, tags: linkTags, endpoint: endpoint) { success in
+                        print("[Upload] Link + Caption digest: \(success ? "success" : "failed")")
+                        completion(success, downloadURL)
+                    }
+                    
+                case .failure(let error):
+                    print("[Upload] Kash Files upload failed: \(error)")
+                    completion(false, error.localizedDescription)
+                }
+            }
+            
         case .both:
             guard let endpoint = endpoint, let kashFiles = kashFiles else {
                 completion(false, "Both endpoint and Kash Files required")
@@ -229,7 +260,6 @@ class KashStashUploader {
             
             print("[Upload] Starting BOTH mode upload")
             
-            // First upload to Kash Files
             KashFilesClient.uploadFile(data: data, filename: filename, mimeType: mimeType, config: kashFiles) { result in
                 switch result {
                 case .success(let response):
@@ -245,7 +275,6 @@ class KashStashUploader {
                     }
                     
                     if mimeType.hasPrefix("image/") {
-                        // Extract caption from context if present
                         var actualContext = context
                         var userCaption = ""
                         
@@ -257,10 +286,8 @@ class KashStashUploader {
                             }
                         }
                         
-                        // Upload photo with AI context
                         uploadPhoto(data: data, tags: "\(tags),\(filename)", context: actualContext, endpoint: endpoint) { photoSuccess in
                             if photoSuccess {
-                                // Build link note with user caption if provided
                                 var linkNote = ""
                                 if !userCaption.isEmpty {
                                     linkNote = userCaption + "\n\n"
@@ -278,7 +305,6 @@ class KashStashUploader {
                             }
                         }
                     } else if mimeType == "text/plain" {
-                        // TEXT: Single digest with original text + file link + caption
                         let originalText = String(data: data, encoding: .utf8) ?? ""
                         
                         var digestContent = originalText
@@ -294,7 +320,6 @@ class KashStashUploader {
                             completion(success, downloadURL)
                         }
                     } else {
-                        // OTHER FILES: Link digest with caption
                         var linkNote = "📎 File in Kash Files: \(response.filename ?? filename)\n\nAccess URL: \(downloadURL)"
                         if !context.isEmpty {
                             linkNote += "\n\n\(context)"

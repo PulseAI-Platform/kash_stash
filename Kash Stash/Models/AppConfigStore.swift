@@ -26,6 +26,7 @@ struct AppConfig: Codable, Equatable {
 enum UploadDestination: String, Codable, CaseIterable {
     case endpointOnly = "Endpoint Only"
     case kashFilesOnly = "Kash Files Only"
+    case linkAndCaption = "Link + Caption"
     case both = "Both"
 }
 

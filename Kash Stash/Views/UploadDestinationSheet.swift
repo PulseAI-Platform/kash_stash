@@ -76,11 +76,13 @@ struct UploadDestinationSheet: View {
     func destinationDescription(for destination: UploadDestination) -> String {
         switch destination {
         case .endpointOnly:
-            return "Upload directly to your endpoint"
+            return "Upload directly to your endpoint for AI processing"
         case .kashFilesOnly:
-            return "Upload to Kash Files cloud storage"
+            return "Upload to Kash Files cloud storage only"
+        case .linkAndCaption:
+            return "Upload to Kash Files and create a link digest"
         case .both:
-            return "Upload to both Kash Files and create digest at endpoint"
+            return "Upload to Kash Files, create link digest, and send to AI"
         }
     }
 }
