@@ -1686,7 +1686,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun uploadRawFileToKashFilesOnly(
-        fileBytes: ByteArray,
+        fileData: ByteArray,
         filename: String,
         mimeType: String,
         tags: String,
@@ -1702,15 +1702,45 @@ class MainActivity : AppCompatActivity() {
             }
 
             val client = KashFilesClient(kf)
-            val result = client.uploadFile(filename, fileBytes, mimeType, tags, caption)
+            val result = client.uploadFile(filename, fileData, mimeType, tags, caption)
 
             if (result.ok && result.download != null) {
                 val fullUrl = "${kf.url}${result.download}"
-                Snackbar.make(
-                    binding.root,
-                    "✅ File uploaded to Kash Files!\nURL: $fullUrl",
-                    Snackbar.LENGTH_LONG
-                ).show()
+
+                // --- FIX: Add Link Posting Logic ---
+                val config = ConfigManager.load(this@MainActivity)
+                val hasEndpoint = config.endpoints.isNotEmpty()
+
+                if (hasEndpoint) {
+                    // 1. Create the "Link Digest" Text
+                    val linkText = """
+                    File: $filename
+                    Type: $mimeType
+                    Kash Files Link: $fullUrl
+                    
+                    ${if (caption.isNotBlank()) caption else "File available at link above."}
+                    """.trimIndent()
+
+                    // 2. Create a filename for this link text
+                    val filenameTag = filename.substringBeforeLast('.')
+                    val linkFilename = "${filenameTag}_link_${System.currentTimeMillis()}.txt"
+
+                    // 3. Upload the Link Text to the Endpoint (AI/Indexer)
+                    uploadToEndpoint(linkText.toByteArray(), linkFilename, "text/plain", tags, linkText)
+
+                    Snackbar.make(
+                        binding.root,
+                        "✅ File uploaded to Kash Files!\nLink digest posted to App.",
+                        Snackbar.LENGTH_LONG
+                    ).show()
+                } else {
+                    // Fallback if no endpoint is configured
+                    Snackbar.make(
+                        binding.root,
+                        "✅ File uploaded to Kash Files!\nURL: $fullUrl",
+                        Snackbar.LENGTH_LONG
+                    ).show()
+                }
             } else {
                 Snackbar.make(binding.root, "❌ Upload failed: ${result.error}", Snackbar.LENGTH_SHORT).show()
             }
