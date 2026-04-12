@@ -1710,7 +1710,7 @@ class MainActivity : AppCompatActivity() {
                 // --- FIX: Add Link Posting Logic ---
                 val config = ConfigManager.load(this@MainActivity)
                 val hasEndpoint = config.endpoints.isNotEmpty()
-
+                // --- test ---
                 if (hasEndpoint) {
                     // 1. Create the "Link Digest" Text
                     val linkText = """
